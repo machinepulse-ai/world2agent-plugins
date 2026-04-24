@@ -1,0 +1,59 @@
+{
+  "name": "@world2agent/claude-code-channel",
+  "version": "0.1.0-alpha.0",
+  "description": "World2Agent channel for Claude Code — deliver signals from any sensor into Claude Code sessions",
+  "license": "Apache-2.0",
+  "author": "MachinePulse AI",
+  "homepage": "https://github.com/machinepulse-ai/world2agent",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/machinepulse-ai/world2agent-plugins.git",
+    "directory": "claude-code-channel"
+  },
+  "bugs": {
+    "url": "https://github.com/machinepulse-ai/world2agent-plugins/issues"
+  },
+  "keywords": [
+    "world2agent",
+    "w2a",
+    "claude-code",
+    "claude-code-plugin",
+    "mcp",
+    "channel",
+    "sensor"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "w2a-claude-code": "./dist/bin.js"
+  },
+  "scripts": {
+    "build": "tsc --build && node build.mjs",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "prepublishOnly": "pnpm run clean && pnpm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@world2agent/sdk": "^0.1.0-alpha.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "esbuild": "^0.28.0",
+    "typescript": "^5.8.3"
+  },
+  "files": [
+    "dist",
+    ".claude-plugin",
+    ".mcp.json",
+    "commands",
+    "skills",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

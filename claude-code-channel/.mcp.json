@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "world2agent": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/bin.bundle.mjs"]
+    }
+  }
+}
