@@ -174,35 +174,57 @@ async function main() {
         },
         instructions: instructions || undefined,
     });
-    // TEMP: gate all outgoing notifications for 30s after startup. Claude Code's
-    // client needs a grace period to finish its own init before it reliably
-    // routes `notifications/claude/channel` to the model; signals that arrive
-    // too early get dropped. Remove once the client stabilizes early delivery.
-    const NOTIFICATION_GATE_MS = 30_000;
-    const notificationGate = new Promise((resolve) => setTimeout(() => {
-        console.error(`[world2agent] notification gate opened (${NOTIFICATION_GATE_MS}ms elapsed)`);
-        resolve();
-    }, NOTIFICATION_GATE_MS));
+    // Gate outgoing notifications until the client has sent
+    // `notifications/initialized` (MCP handshake completion). Earlier
+    // notifications are queued — Claude Code's client drops channel
+    // notifications that arrive before init is done.
     let gateOpen = false;
+    let openGate = () => { };
+    const notificationGate = new Promise((resolve) => {
+        openGate = resolve;
+    });
     notificationGate.then(() => {
         gateOpen = true;
     });
+    mcp.oninitialized = () => {
+        console.error("[world2agent] client initialized — opening notification gate");
+        openGate();
+    };
     const sendNotification = async (params) => {
         if (!gateOpen) {
-            console.error(`[world2agent] notification queued behind 30s gate: ${params.method}`);
+            console.error(`[world2agent] notification queued until client init: ${params.method}`);
             await notificationGate;
         }
         await mcp.notification(params);
     };
     // Transport closure: every emit from every sensor flows through here.
+    // The body is what Claude Code surfaces to the model, so it must carry
+    // everything the handler skill needs to act — `meta` is for client-side
+    // routing, not guaranteed to reach the model.
     const transport = async (signal) => {
         const skillId = packageToSkillId(signal.source.package);
-        let body = `[W2A Signal pkg=${signal.source.package}] ${signal.event.type}\n\n${signal.event.summary}`;
+        const headerBits = [`pkg=${signal.source.package}`];
+        if (signal.source.source_type)
+            headerBits.push(`source=${signal.source.source_type}`);
+        if (signal.source.user_identity && signal.source.user_identity !== "unknown") {
+            headerBits.push(`user=${signal.source.user_identity}`);
+        }
+        let body = `[W2A Signal ${headerBits.join(" ")}] ${signal.event.type}\n\n${signal.event.summary}`;
+        if (signal.source_event) {
+            body += `\n\nSource event data:\n\`\`\`json\n${JSON.stringify(signal.source_event.data, null, 2)}\n\`\`\``;
+        }
         if (signal.attachments && signal.attachments.length > 0) {
-            const payloadDesc = signal.attachments
-                .map((p) => `[${p.mime_type}] ${p.description}`)
-                .join("\n");
-            body += `\n\nAttachments:\n${payloadDesc}`;
+            body += "\n\nAttachments:";
+            for (const a of signal.attachments) {
+                body += `\n- [${a.mime_type}] ${a.description}`;
+                if (a.type === "inline") {
+                    const indented = a.data.split("\n").join("\n  ");
+                    body += `\n  ${indented}`;
+                }
+                else {
+                    body += `\n  uri: ${a.uri}`;
+                }
+            }
         }
         const content = `Use skill: ${skillId}\n\n${body}`;
         const meta = {
@@ -217,8 +239,6 @@ async function main() {
         if (signal.source.user_identity) {
             meta.user_identity = signal.source.user_identity;
         }
-        // TEMP: routed through sendNotification so signals are held until the
-        // 30s startup gate opens (see NOTIFICATION_GATE_MS above).
         await sendNotification({
             method: "notifications/claude/channel",
             params: { content, meta },
@@ -413,11 +433,9 @@ async function main() {
     process.on("SIGTERM", shutdown);
     console.error(`[world2agent] Connecting to Claude Code...`);
     await mcp.connect(new StdioServerTransport());
-    console.error(`[world2agent] Connected.`);
-    // Small delay to ensure connection is fully established before sending first notification
-    await new Promise((r) => setTimeout(r, 500));
-    // TEMP: all boot-time notifications below go through sendNotification so
-    // they respect the 30s startup gate. Sensor startup itself is NOT gated —
+    console.error(`[world2agent] Connected. Waiting for client init before sending notifications...`);
+    // Boot-time notifications go through sendNotification so they respect the
+    // init gate (see oninitialized above). Sensor startup itself is NOT gated —
     // we want sensors collecting and deduping in the background during the wait.
     if (noSensorsConfigured) {
         console.error(`[world2agent] Sending onboarding notification.`);
