@@ -18393,35 +18393,58 @@ async function main() {
       instructions: instructions || void 0
     }
   );
-  const NOTIFICATION_GATE_MS = 3e4;
-  const notificationGate = new Promise(
-    (resolve) => setTimeout(() => {
-      console.error(`[world2agent] notification gate opened (${NOTIFICATION_GATE_MS}ms elapsed)`);
-      resolve();
-    }, NOTIFICATION_GATE_MS)
-  );
   let gateOpen = false;
+  let openGate = () => {
+  };
+  const notificationGate = new Promise((resolve) => {
+    openGate = resolve;
+  });
   notificationGate.then(() => {
     gateOpen = true;
   });
+  mcp.oninitialized = () => {
+    console.error("[world2agent] client initialized \u2014 opening notification gate");
+    openGate();
+  };
   const sendNotification = async (params) => {
     if (!gateOpen) {
-      console.error(`[world2agent] notification queued behind 30s gate: ${params.method}`);
+      console.error(`[world2agent] notification queued until client init: ${params.method}`);
       await notificationGate;
     }
     await mcp.notification(params);
   };
   const transport = async (signal) => {
     const skillId = packageToSkillId(signal.source.package);
-    let body = `[W2A Signal pkg=${signal.source.package}] ${signal.event.type}
+    const headerBits = [`pkg=${signal.source.package}`];
+    if (signal.source.source_type) headerBits.push(`source=${signal.source.source_type}`);
+    if (signal.source.user_identity && signal.source.user_identity !== "unknown") {
+      headerBits.push(`user=${signal.source.user_identity}`);
+    }
+    let body = `[W2A Signal ${headerBits.join(" ")}] ${signal.event.type}
 
 ${signal.event.summary}`;
-    if (signal.attachments && signal.attachments.length > 0) {
-      const payloadDesc = signal.attachments.map((p) => `[${p.mime_type}] ${p.description}`).join("\n");
+    if (signal.source_event) {
       body += `
 
-Attachments:
-${payloadDesc}`;
+Source event data:
+\`\`\`json
+${JSON.stringify(signal.source_event.data, null, 2)}
+\`\`\``;
+    }
+    if (signal.attachments && signal.attachments.length > 0) {
+      body += "\n\nAttachments:";
+      for (const a of signal.attachments) {
+        body += `
+- [${a.mime_type}] ${a.description}`;
+        if (a.type === "inline") {
+          const indented = a.data.split("\n").join("\n  ");
+          body += `
+  ${indented}`;
+        } else {
+          body += `
+  uri: ${a.uri}`;
+        }
+      }
     }
     const content = `Use skill: ${skillId}
 
@@ -18590,8 +18613,7 @@ ${body}`;
   process.on("SIGTERM", shutdown);
   console.error(`[world2agent] Connecting to Claude Code...`);
   await mcp.connect(new StdioServerTransport());
-  console.error(`[world2agent] Connected.`);
-  await new Promise((r) => setTimeout(r, 500));
+  console.error(`[world2agent] Connected. Waiting for client init before sending notifications...`);
   if (noSensorsConfigured) {
     console.error(`[world2agent] Sending onboarding notification.`);
     await sendNotification({

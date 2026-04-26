@@ -1,6 +1,6 @@
 {
   "name": "@world2agent/claude-code-channel",
-  "version": "0.1.0-alpha.0",
+  "version": "0.1.0-alpha.1",
   "description": "World2Agent channel for Claude Code — deliver signals from any sensor into Claude Code sessions",
   "license": "Apache-2.0",
   "author": "MachinePulse AI",
