@@ -1,7 +1,7 @@
 {
   "name": "world2agent-plugins",
   "owner": {
-    "name": "MachinePulse AI"
+    "name": "MachinePulse Pte. Ltd."
   },
   "metadata": {
     "description": "World2Agent plugins for Claude Code — give your agent real-time awareness of external events via pluggable sensors."

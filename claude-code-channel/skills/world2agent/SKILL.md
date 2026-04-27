@@ -28,7 +28,10 @@ Sensors are declared in `~/.world2agent/config.json`:
 }
 ```
 
-After editing this file directly, call the channel's `reload_sensors` MCP tool — it diffs the new config against what's running and starts/stops/restarts sensors accordingly. No session restart needed in the common case; a full restart is only required if `reload_sensors` reports that a newly-installed package can't be resolved (Node needs to re-scan `node_modules`).
+When the user changes this file:
+
+- **Adding a new sensor** (whose npm package wasn't previously installed) → the user MUST start a new session: `claude --dangerously-load-development-channels plugin:world2agent@world2agent-plugins`. Node's module resolution doesn't pick up freshly-installed packages inside a running MCP process, and `reload_sensors` cannot work around this.
+- **Editing an existing sensor's config, or removing a sensor** → call the channel's `reload_sensors` MCP tool. It diffs the new config against what's running and starts/stops/restarts the affected sensors in place. No restart needed.
 
 ## Per-sensor setup
 
