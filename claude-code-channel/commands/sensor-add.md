@@ -76,15 +76,21 @@ Fill the skill template from SETUP.md with the user's answers and write it to th
 
 If no project directory exists or the user prefers global, write to `~/.claude/skills/<skill_id>/SKILL.md` instead.
 
-## 5. Hot-reload the new sensor
+## 5. Tell the user to start a new session
 
-Call the `reload_sensors` MCP tool exposed by the world2agent channel. It re-reads `~/.world2agent/config.json`, imports any newly-added packages, and starts them in the already-running MCP process — no session restart needed.
+A freshly-installed sensor is **not** picked up by the running MCP process — Node's module resolution caches `node_modules` and doesn't see the new package without a process restart. So after the config file + handler skill are written, the sensor still won't run until the user exits this session and starts a new one.
 
-After the tool returns, tell the user what happened (which sensor started, or any error from the tool's text response).
+Tell the user, in their language, to:
 
-**Restart is only required when:**
+1. Quit this Claude Code session.
+2. Run:
 
-- `reload_sensors` reports that a sensor failed to load because the package can't be resolved. In that case the user needs to exit and re-run `claude --dangerously-load-development-channels plugin:world2agent@world2agent-plugins` so Node picks up freshly-installed `node_modules`.
-- The user wants to *remove* a sensor. `reload_sensors` only starts newly-added sensors; it does not stop removed ones.
+   ```bash
+   claude --dangerously-load-development-channels plugin:world2agent@world2agent-plugins
+   ```
 
-`/reload-plugins` alone is NOT sufficient for either case — it doesn't touch the MCP process.
+3. The new sensor will start automatically once the new session boots.
+
+`/reload-plugins` alone is NOT sufficient — it reloads plugin definitions but does not refresh Node's `node_modules` view inside the running MCP channel.
+
+`reload_sensors` (the channel's MCP tool) is for *config-only* changes after the package is already imported — e.g. you edit `~/.world2agent/config.json` to tweak a parameter or remove a sensor. **It does not reliably load brand-new packages**, so don't use it as a substitute for the restart in this install flow.

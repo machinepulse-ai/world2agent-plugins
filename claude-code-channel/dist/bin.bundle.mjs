@@ -11180,7 +11180,7 @@ function configFromEnv2(slug) {
 }
 
 // src/bin.ts
-import { existsSync as existsSync3 } from "node:fs";
+import { existsSync as existsSync3, appendFileSync, mkdirSync as mkdirSync2 } from "node:fs";
 import { dirname as dirname2, join as join3 } from "node:path";
 import { createRequire } from "node:module";
 import { homedir as homedir3 } from "node:os";
@@ -18352,6 +18352,20 @@ function stableStringify(value) {
 }
 async function main() {
   console.error("[world2agent] Starting World2Agent channel for Claude Code...");
+  const channelLogPath = join3(homedir3(), ".world2agent", "channel.log");
+  const log = (msg) => {
+    const line = `[${(/* @__PURE__ */ new Date()).toISOString()}] [world2agent] ${msg}`;
+    console.error(line);
+    try {
+      appendFileSync(channelLogPath, line + "\n");
+    } catch {
+      try {
+        mkdirSync2(dirname2(channelLogPath), { recursive: true });
+        appendFileSync(channelLogPath, line + "\n");
+      } catch {
+      }
+    }
+  };
   const bootConfig = loadConfig();
   const noSensorsConfigured = bootConfig.sensors.length === 0;
   if (noSensorsConfigured) {
@@ -18402,13 +18416,21 @@ async function main() {
   notificationGate.then(() => {
     gateOpen = true;
   });
+  let channelEnabled = null;
+  let resolveChannelReady = () => {
+  };
+  const channelReady = new Promise((resolve) => {
+    resolveChannelReady = resolve;
+  });
+  channelReady.then((v) => {
+    channelEnabled = v;
+  });
   mcp.oninitialized = () => {
-    console.error("[world2agent] client initialized \u2014 opening notification gate");
+    log("Client initialized");
     openGate();
   };
   const sendNotification = async (params) => {
     if (!gateOpen) {
-      console.error(`[world2agent] notification queued until client init: ${params.method}`);
       await notificationGate;
     }
     await mcp.notification(params);
@@ -18553,7 +18575,20 @@ ${body}`;
     return parts.join(" ");
   };
   let initialStartDone = !needsSetup;
+  const channelDisabledMessage = () => "Channel notifications are not flowing in this Claude Code session (the boot handshake was never acknowledged), so sensors were NOT started. Polling now would write seen-id state to ~/.world2agent/state.json and pollute the dedup cache \u2014 when you next launch Claude Code with `--dangerously-load-development-channels plugin:world2agent@world2agent-plugins`, the sensor would silently swallow the first real batch of signals.\n\nWhat to do: exit this session and relaunch Claude Code with that flag. Sensor config in ~/.world2agent/config.json is already saved; no need to re-run /world2agent:sensor-add.\n\nSee ~/.world2agent/channel.log for the boot trace.";
+  const confirmChannelReceivedTool = async () => {
+    if (channelEnabled === true) {
+      return "Channel handshake already confirmed \u2014 no action needed.";
+    }
+    if (channelEnabled === false) {
+      return "Channel was previously marked disabled (handshake timed out). Restart Claude Code to retry.";
+    }
+    log("Channel handshake ack received \u2014 channel notifications are flowing.");
+    resolveChannelReady(true);
+    return "Channel handshake confirmed. Proceeding with sensor startup.";
+  };
   const startSensorsTool = async () => {
+    if (!await channelReady) return channelDisabledMessage();
     if (initialStartDone) {
       const diff2 = await applyConfig(loadConfig().sensors, { gateOnHandlerSkill: false });
       return summarizeDiff(diff2);
@@ -18563,13 +18598,23 @@ ${body}`;
     return summarizeDiff(diff);
   };
   const reloadSensorsTool = async () => {
-    console.error("[world2agent] reload_sensors: re-reading config...");
+    if (!await channelReady) return channelDisabledMessage();
+    log("reload_sensors: re-reading config...");
     const fresh = loadConfig();
     const diff = await applyConfig(fresh.sensors, { gateOnHandlerSkill: true });
     return summarizeDiff(diff);
   };
   mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
+      {
+        name: "confirm_channel_received",
+        description: "Acknowledge that this Claude Code session is receiving World2Agent channel notifications. Call this IMMEDIATELY when you see a channel message asking you to do so \u2014 sensors will not start until you do.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+          required: []
+        }
+      },
       ...needsSetup ? [{
         name: "start_sensors",
         description: "Start the signal sensors. Call this after the user has configured their preferences, or if they choose to skip configuration.",
@@ -18591,6 +18636,10 @@ ${body}`;
     ]
   }));
   mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
+    if (req.params.name === "confirm_channel_received") {
+      const result = await confirmChannelReceivedTool();
+      return { content: [{ type: "text", text: result }] };
+    }
     if (req.params.name === "start_sensors") {
       const result = await startSensorsTool();
       return { content: [{ type: "text", text: result }] };
@@ -18611,11 +18660,53 @@ ${body}`;
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
-  console.error(`[world2agent] Connecting to Claude Code...`);
+  process.stdin.on("end", () => {
+    console.error("[world2agent] stdin ended \u2014 shutting down");
+    void shutdown();
+  });
+  process.stdin.on("close", () => {
+    console.error("[world2agent] stdin closed \u2014 shutting down");
+    void shutdown();
+  });
+  process.stdin.on("error", (err) => {
+    console.error("[world2agent] stdin error \u2014 shutting down:", err);
+    void shutdown();
+  });
+  log(`Connecting to Claude Code...`);
   await mcp.connect(new StdioServerTransport());
-  console.error(`[world2agent] Connected. Waiting for client init before sending notifications...`);
-  if (noSensorsConfigured) {
-    console.error(`[world2agent] Sending onboarding notification.`);
+  log(`Connected. Sending channel handshake (will queue until client init)...`);
+  if (channelEnabled === null) {
+    const HANDSHAKE_DELAY_MS = 5e3;
+    setTimeout(() => {
+      log(`Firing handshake notification (${HANDSHAKE_DELAY_MS}ms post-connect)...`);
+      void sendNotification({
+        method: "notifications/claude/channel",
+        params: {
+          content: "World2Agent channel handshake.\n\nIf you are reading this message, channel notifications are flowing in this Claude Code session. Please IMMEDIATELY call the `confirm_channel_received` tool with no arguments \u2014 World2Agent sensors will not start polling until you do.\n\nDon't reply to the user about this message; just call the tool. After acknowledgment, normal sensor signals will follow as usual.",
+          meta: {
+            event_type: "system.world2agent.handshake",
+            reason: "boot_handshake"
+          }
+        }
+      }).catch((err) => log(`Handshake notify error: ${err}`));
+    }, HANDSHAKE_DELAY_MS);
+    const HANDSHAKE_TIMEOUT_MS = 3e4;
+    setTimeout(() => {
+      if (channelEnabled === null) {
+        log(
+          `Channel handshake not acknowledged within ${HANDSHAKE_TIMEOUT_MS}ms \u2014 treating as disabled.`
+        );
+        resolveChannelReady(false);
+      }
+    }, HANDSHAKE_TIMEOUT_MS);
+  }
+  const clientChannelEnabled = await channelReady;
+  if (!clientChannelEnabled) {
+    log(
+      "Channel disabled (handshake not acknowledged). Skipping sensor startup to avoid polluting ~/.world2agent/state.json. Tools (start_sensors / reload_sensors) will return a help message if called. To enable, relaunch Claude Code with `--dangerously-load-development-channels plugin:world2agent@world2agent-plugins`."
+    );
+  } else if (noSensorsConfigured) {
+    log(`Sending onboarding notification.`);
     await sendNotification({
       method: "notifications/claude/channel",
       params: {
@@ -18627,9 +18718,9 @@ ${body}`;
       }
     });
   } else if (needsSetup) {
-    console.error(`[world2agent] Waiting for start_sensors tool call...`);
+    log(`Waiting for start_sensors tool call...`);
     const sensorList = sensorsNeedingSetup.map((s) => s.skillId).join(", ");
-    console.error(`[world2agent] Sending setup prompt notification for: ${sensorList}`);
+    log(`Sending setup prompt notification for: ${sensorList}`);
     await sendNotification({
       method: "notifications/claude/channel",
       params: {
@@ -18641,9 +18732,9 @@ ${body}`;
       }
     });
   } else {
-    console.error(`[world2agent] Starting ${bootEnabled.length} sensor(s)...`);
+    log(`Starting ${bootEnabled.length} sensor(s)...`);
     const diff = await applyConfig(bootEnabled, { gateOnHandlerSkill: false });
-    console.error(`[world2agent] ${summarizeDiff(diff)}`);
+    log(summarizeDiff(diff));
     if (diff.failed.length > 0 && handles.size === 0) {
       await sendNotification({
         method: "notifications/claude/channel",
@@ -18652,6 +18743,21 @@ ${body}`;
           meta: {
             event_type: "system.world2agent.onboarding",
             reason: "all_failed"
+          }
+        }
+      });
+    } else if (diff.started.length > 0) {
+      const running = diff.started.join(", ");
+      log(`Sending ready notification.`);
+      await sendNotification({
+        method: "notifications/claude/channel",
+        params: {
+          content: `World2Agent is now active and listening for signals from ${diff.started.length} sensor(s): ${running}.
+
+In one short sentence, tell the user that World2Agent is ready and which source(s) it's watching, then return control to whatever the user was doing. Do not list installation steps or repeat this message.`,
+          meta: {
+            event_type: "system.world2agent.ready",
+            sensor_count: String(diff.started.length)
           }
         }
       });

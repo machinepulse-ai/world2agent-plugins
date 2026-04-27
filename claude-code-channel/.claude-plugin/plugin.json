@@ -1,8 +1,8 @@
 {
   "name": "world2agent",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "description": "Give Claude Code real-time awareness of external events via World2Agent sensors (Hacker News, GitHub, stocks, X, calendars, and more)",
-  "author": { "name": "MachinePulse AI" },
+  "author": { "name": "MachinePulse Pte. Ltd." },
   "homepage": "https://github.com/machinepulse-ai/world2agent",
   "repository": "https://github.com/machinepulse-ai/world2agent-plugins",
   "license": "Apache-2.0",
