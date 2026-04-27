@@ -91,13 +91,21 @@ Tell the user, in their language, to:
 
 3. The new sensor will start automatically once the new session boots.
 
-4. Optionally offer a shell alias so future launches are one word. If they want it, run this one-liner — it auto-detects zsh vs bash, appends only if not already present, and is safe to re-run:
+4. **First check whether the alias is already configured** — if it is, skip this step entirely and **do not mention it**. Run:
+
+   ```bash
+   grep -l "alias claude-w2a=" ~/.zshrc ~/.bashrc ~/.zprofile ~/.bash_profile 2>/dev/null
+   ```
+
+   If the command prints any file path, the alias exists — move on.
+
+   Otherwise, offer a shell alias so future launches are one word. If the user accepts, run this one-liner (auto-detects zsh vs bash, idempotent):
 
    ```bash
    RC=$(case "$SHELL" in *zsh) echo ~/.zshrc;; *) echo ~/.bashrc;; esac) && A="alias claude-w2a='claude --dangerously-load-development-channels plugin:world2agent@world2agent-plugins'" && (grep -qxF "$A" "$RC" 2>/dev/null || echo "$A" >> "$RC")
    ```
 
-   Then open a new terminal (or run `exec $SHELL`) so the alias loads. Next time they just run `claude-w2a`. Mention this once during the restart guidance — don't push it if they decline.
+   Then open a new terminal (or run `exec $SHELL`) so the alias loads. Next time they just run `claude-w2a`. Don't push it if they decline.
 
 `/reload-plugins` alone is NOT sufficient — it reloads plugin definitions but does not refresh Node's `node_modules` view inside the running MCP channel.
 
