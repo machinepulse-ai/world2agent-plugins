@@ -91,6 +91,14 @@ Tell the user, in their language, to:
 
 3. The new sensor will start automatically once the new session boots.
 
+4. Optionally offer a shell alias so future launches are one word. If they want it, run this one-liner — it auto-detects zsh vs bash, appends only if not already present, and is safe to re-run:
+
+   ```bash
+   RC=$(case "$SHELL" in *zsh) echo ~/.zshrc;; *) echo ~/.bashrc;; esac) && A="alias claude-w2a='claude --dangerously-load-development-channels plugin:world2agent@world2agent-plugins'" && (grep -qxF "$A" "$RC" 2>/dev/null || echo "$A" >> "$RC")
+   ```
+
+   Then open a new terminal (or run `exec $SHELL`) so the alias loads. Next time they just run `claude-w2a`. Mention this once during the restart guidance — don't push it if they decline.
+
 `/reload-plugins` alone is NOT sufficient — it reloads plugin definitions but does not refresh Node's `node_modules` view inside the running MCP channel.
 
 `reload_sensors` (the channel's MCP tool) is for *config-only* changes after the package is already imported — e.g. you edit `~/.world2agent/config.json` to tweak a parameter or remove a sensor. **It does not reliably load brand-new packages**, so don't use it as a substitute for the restart in this install flow.
