@@ -1,0 +1,66 @@
+{
+  "id": "world2agent",
+  "name": "World2Agent",
+  "description": "Run World2Agent sensors inside OpenClaw and dispatch signals into embedded agent turns.",
+  "skills": [
+    "./skills/world2agent-manage"
+  ],
+  "commandAliases": [
+    "world2agent"
+  ],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "sensorsManifestPath": {
+        "type": "string",
+        "description": "Absolute or relative path to the World2Agent sensor manifest."
+      },
+      "stateDir": {
+        "type": "string",
+        "description": "Directory for per-sensor FileSensorStore state."
+      },
+      "sessionDir": {
+        "type": "string",
+        "description": "Directory for plugin-managed embedded-agent session files."
+      },
+      "workspaceDir": {
+        "type": "string",
+        "description": "Workspace directory passed to runEmbeddedAgent when the OpenClaw runtime helper is unavailable."
+      },
+      "ingestUrl": {
+        "type": "string",
+        "description": "Absolute URL for the plugin's /w2a/ingest route when isolated runners are enabled."
+      },
+      "defaultAgentId": {
+        "type": "string",
+        "default": "world2agent",
+        "description": "Dedicated OpenClaw agent id whose skills allowlist should receive W2A skills."
+      },
+      "provider": {
+        "type": "string",
+        "description": "Provider passed to runEmbeddedAgent (e.g. 'openai-codex' for OAuth, 'openai' for API key). When unset OpenClaw resolves from agent/global defaults."
+      },
+      "model": {
+        "type": "string",
+        "description": "Model id passed to runEmbeddedAgent (e.g. 'gpt-5.4'). When unset OpenClaw resolves from agent/global defaults."
+      },
+      "requestTimeoutMs": {
+        "type": "integer",
+        "minimum": 1,
+        "default": 120000,
+        "description": "Timeout passed to runEmbeddedAgent and isolated ingest POSTs."
+      },
+      "ingestHmacSecretFile": {
+        "type": "string",
+        "description": "Path to the HMAC secret used by isolated runner ingest requests."
+      },
+      "ingestDedupTtlMs": {
+        "type": "integer",
+        "minimum": 1000,
+        "default": 3600000,
+        "description": "How long X-Request-ID dedup entries stay in memory."
+      }
+    }
+  }
+}
