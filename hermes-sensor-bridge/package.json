@@ -1,0 +1,54 @@
+{
+  "name": "@world2agent/hermes-sensor-bridge",
+  "version": "0.0.0-dev",
+  "description": "World2Agent bridge for Hermes Agent — runs sensors as supervised subprocesses and delivers their signals into Hermes via webhook subscriptions",
+  "license": "Apache-2.0",
+  "author": "MachinePulse Pte. Ltd.",
+  "homepage": "https://github.com/machinepulse-ai/world2agent",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/machinepulse-ai/world2agent-plugins.git",
+    "directory": "hermes-sensor-bridge"
+  },
+  "bugs": {
+    "url": "https://github.com/machinepulse-ai/world2agent-plugins/issues"
+  },
+  "keywords": [
+    "world2agent",
+    "w2a",
+    "hermes",
+    "hermes-agent",
+    "webhook",
+    "bridge",
+    "sensor"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "type": "module",
+  "bin": {
+    "world2agent-sensor-runner": "./dist/runner/bin.js",
+    "world2agent-hermes-supervisor": "./dist/supervisor/bin.js",
+    "world2agent-hermes": "./dist/cli/bin.js"
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "prepublishOnly": "pnpm run clean && pnpm run build"
+  },
+  "dependencies": {
+    "@world2agent/sdk": "0.1.0-alpha.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "typescript": "^5.8.3"
+  },
+  "files": [
+    "dist",
+    "skills",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}
