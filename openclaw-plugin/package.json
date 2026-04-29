@@ -1,6 +1,6 @@
 {
   "name": "@world2agent/openclaw-plugin",
-  "version": "0.0.0-dev",
+  "version": "0.1.0-alpha.0",
   "description": "World2Agent native plugin for OpenClaw",
   "license": "Apache-2.0",
   "author": "MachinePulse Pte. Ltd.",
@@ -40,7 +40,7 @@
     "prepublishOnly": "pnpm run clean && pnpm run build"
   },
   "dependencies": {
-    "@world2agent/sdk": "file:../../world2agent-typescript-sdk",
+    "@world2agent/sdk": "0.1.0-alpha.1",
     "zod": "^3.25.76"
   },
   "devDependencies": {
@@ -66,4 +66,3 @@
     "access": "public"
   }
 }
-

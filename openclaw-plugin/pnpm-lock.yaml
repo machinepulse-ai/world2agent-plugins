@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@world2agent/sdk':
-        specifier: file:../../world2agent-typescript-sdk
-        version: file:../../world2agent-typescript-sdk(zod@3.25.76)
+        specifier: 0.1.0-alpha.1
+        version: 0.1.0-alpha.1(zod@3.25.76)
       zod:
         specifier: ^3.25.76
         version: 3.25.76
@@ -187,8 +187,8 @@ packages:
   '@vitest/utils@4.1.5':
     resolution: {integrity: sha512-76wdkrmfXfqGjueGgnb45ITPyUi1ycZ4IHgC2bhPDUfWHklY/q3MdLOAB+TF1e6xfl8NxNY0ZYaPCFNWSsw3Ug==}
 
-  '@world2agent/sdk@file:../../world2agent-typescript-sdk':
-    resolution: {directory: ../../world2agent-typescript-sdk, type: directory}
+  '@world2agent/sdk@0.1.0-alpha.1':
+    resolution: {integrity: sha512-YfCdXPyX9Zm811fsT0kiTfCRW7iOZ4ByYZCwlqeKZbXRy8/RxJrse6KGzexfZWAXv0L8Gl8ZvOJTs4WesfIiaQ==}
     engines: {node: '>=20'}
     peerDependencies:
       zod: ^3.25.0
@@ -604,7 +604,7 @@ snapshots:
       convert-source-map: 2.0.0
       tinyrainbow: 3.1.0
 
-  '@world2agent/sdk@file:../../world2agent-typescript-sdk(zod@3.25.76)':
+  '@world2agent/sdk@0.1.0-alpha.1(zod@3.25.76)':
     dependencies:
       zod: 3.25.76
 
