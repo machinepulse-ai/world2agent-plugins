@@ -8,12 +8,13 @@
 #   --skill-md <path>          rendered handler SKILL.md to copy in
 #   [--sensor-id <id>]         override; defaults to packageToSkillId(package)
 #   [--deliver <platform>]     forwarded to hermes; if omitted, auto-detected
-#                              from <PLATFORM>_HOME_CHANNEL in ~/.hermes/.env
+#                              from the home-channel mapping the user already
+#                              configured during Hermes platform pairing
 #                              (priority: feishu, telegram, discord, slack,
 #                              signal, whatsapp, wecom, dingtalk); falls back
 #                              to "log" if no home channel is configured.
 #   [--deliver-chat-id <id>]   forwarded to hermes; auto-filled from the same
-#                              env var when --deliver is auto-detected.
+#                              source when --deliver is auto-detected.
 #   [--deliver-only]           skip agent run; --skills is automatically dropped
 #
 # Stdout:  {"ok":true,"package","sensor_id","skill_id","subscription_name",
@@ -75,17 +76,17 @@ fm_err=$(assert_skill_frontmatter "$skill_md_path" "$skill_id" 2>&1) \
 hmac=$(jq -r '.hmac_secret // empty' "$(bridge_state_path)")
 [ -n "$hmac" ] || out_err "hmac_secret missing from $(bridge_state_path)"
 
-# Step 1: npm install (idempotent).
+# Step 1: ensure the sensor package is installed under the W2A npm root (idempotent).
 npm_root=$(w2a_npm_root)
 mkdir -p "$npm_root"
 log=$(mktemp)
 if ! npm install --prefix "$npm_root" --no-audit --no-fund "$pkg" >"$log" 2>&1; then
   cat "$log" >&2; rm -f "$log"
-  out_err "npm install $pkg failed"
+  out_err "fetching $pkg failed"
 fi
 rm -f "$log"
 pkg_dir="$npm_root/node_modules/$pkg"
-[ -d "$pkg_dir" ] || out_err "$pkg_dir does not exist after npm install"
+[ -d "$pkg_dir" ] || out_err "$pkg_dir does not exist after the fetch"
 
 # Step 2: write handler SKILL.md.
 skill_dir="$(hermes_home)/skills/$skill_id"
@@ -95,10 +96,10 @@ cp "$skill_md_path" "$skill_dir/SKILL.md"
 # Step 3: hermes webhook subscribe.
 
 # Auto-derive default deliver target when --deliver is omitted.
-# Scans ~/.hermes/.env for the first non-empty <PLATFORM>_HOME_CHANNEL —
-# that env var is set when the user pairs a chat platform via hermes setup,
-# so it's a reliable signal that "this platform is paired and this is the
-# user's preferred chat for inbound notifications."
+# Reads the gateway env file for the first home-channel mapping the user
+# configured during Hermes platform pairing — a reliable signal that "this
+# platform is paired and this is the user's preferred chat for inbound
+# notifications."
 if [ -z "$deliver" ]; then
   env_file="$(hermes_home)/.env"
   if [ -f "$env_file" ]; then

@@ -14,10 +14,9 @@ set -euo pipefail
 [ "$(uname -s)" = "Darwin" ] || out_err "install-launchd.sh only runs on macOS"
 
 binary=$(command -v world2agent-hermes-supervisor || true)
-[ -n "$binary" ] || out_err "world2agent-hermes-supervisor not on PATH; install bridge first"
+[ -n "$binary" ] || out_err "world2agent-hermes-supervisor not on PATH; install the bridge runtime first"
 
-LABEL="dev.world2agent.hermes-supervisor"
-PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+PLIST=$(launchd_plist_path)
 LOG=$(supervisor_log_path)
 
 mkdir -p "$(dirname "$PLIST")" "$(w2a_home)"
@@ -28,7 +27,7 @@ cat >"$PLIST" <<EOF
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>$LABEL</string>
+  <string>$LAUNCHD_LABEL</string>
   <key>ProgramArguments</key>
   <array>
     <string>$binary</string>
@@ -52,9 +51,9 @@ cat >"$PLIST" <<EOF
 EOF
 
 # Idempotent: bootout existing copy first.
-launchctl bootout "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || true
+launchctl bootout "$(launchd_target)" >/dev/null 2>&1 || true
 launchctl bootstrap "gui/$(id -u)" "$PLIST" >/dev/null 2>&1 \
   || out_err "launchctl bootstrap $PLIST failed"
-launchctl kickstart -k "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || true
+launchctl kickstart -k "$(launchd_target)" >/dev/null 2>&1 || true
 
-out_ok "$(jq -nc --arg plist "$PLIST" --arg label "$LABEL" '{plist:$plist,label:$label}')"
+out_ok "$(jq -nc --arg plist "$PLIST" --arg label "$LAUNCHD_LABEL" '{plist:$plist,label:$label}')"

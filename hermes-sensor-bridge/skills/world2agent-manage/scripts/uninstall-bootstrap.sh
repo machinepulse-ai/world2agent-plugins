@@ -3,10 +3,10 @@
 #
 # Steps:
 #   1. launchctl bootout / systemctl --user disable --now (whichever exists)
-#   2. delete the plist or unit file
-#   3. remove the managed block from ~/.hermes/config.yaml and ~/.hermes/.env
+#   2. delete the user-agent / unit file
+#   3. strip the managed gateway-config block + the env-file mirror
 #
-# Does NOT delete ~/.world2agent/ (sensor configs / state stay; that's
+# Does NOT delete the W2A home dir (sensor configs / state stay; that's
 # remove-sensor.sh's job).
 #
 # Args:    none
@@ -17,10 +17,8 @@
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/_lib.sh"
 
-LABEL="dev.world2agent.hermes-supervisor"
-PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-SERVICE="world2agent-hermes-supervisor.service"
-UNIT="$HOME/.config/systemd/user/$SERVICE"
+PLIST=$(launchd_plist_path)
+UNIT=$(systemd_unit_path)
 
 service_kind="none"
 service_path='null'
@@ -28,7 +26,7 @@ service_path='null'
 case "$(uname -s)" in
   Darwin)
     if [ -f "$PLIST" ]; then
-      launchctl bootout "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || true
+      launchctl bootout "$(launchd_target)" >/dev/null 2>&1 || true
       rm -f "$PLIST"
       service_kind="launchd"
       service_path=$(jq -nc --arg p "$PLIST" '$p')
@@ -36,7 +34,7 @@ case "$(uname -s)" in
     ;;
   Linux)
     if [ -f "$UNIT" ]; then
-      systemctl --user disable --now "$SERVICE" >/dev/null 2>&1 || true
+      systemctl --user disable --now "$SYSTEMD_SERVICE" >/dev/null 2>&1 || true
       rm -f "$UNIT"
       systemctl --user daemon-reload >/dev/null 2>&1 || true
       service_kind="systemd"

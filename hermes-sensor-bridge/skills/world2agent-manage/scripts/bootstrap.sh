@@ -3,9 +3,9 @@
 #
 # Steps (each is a no-op when already done):
 #   1. supervisor + runner binaries on PATH
-#   2. ~/.world2agent/.bridge-state.json populated
-#   3. managed `platforms.webhook` block in ~/.hermes/config.yaml
-#   4. managed mirror in ~/.hermes/.env
+#   2. bridge-state file populated under the W2A home dir
+#   3. webhook platform enabled via the managed gateway-config block
+#   4. matching secret mirrored to the gateway env file
 #   5. supervisor process running (delegates to start.sh)
 #
 # Args:    none
@@ -24,7 +24,7 @@ add_step() {
 # Step 1: binary on PATH.
 if ! command -v world2agent-hermes-supervisor >/dev/null 2>&1 \
    || ! command -v world2agent-sensor-runner >/dev/null 2>&1; then
-  out_err "world2agent-hermes-supervisor / world2agent-sensor-runner not on PATH; install bridge first (npm install -g @world2agent/hermes-sensor-bridge)"
+  out_err "world2agent-hermes-supervisor / world2agent-sensor-runner not on PATH; install the bridge runtime first (see package README)"
 fi
 add_step binary "present"
 
@@ -38,21 +38,21 @@ add_step state "$([ "$state_existed" = true ] && echo "present" || echo "created
 secret=$(jq -r '.hmac_secret' "$state_path")
 port=8644
 
-# Step 3: ~/.hermes/config.yaml managed block.
+# Step 3: gateway-config managed block.
 yaml_file="$(hermes_home)/config.yaml"
 if has_managed_block "$yaml_file"; then
   yaml_status="managed-block-exists"
 elif detect_webhook_enabled_in_yaml "$yaml_file"; then
   yaml_status="hand-written-already-enabled"
 elif has_unmanaged_top_level_platforms "$yaml_file"; then
-  out_err "$yaml_file has a hand-written 'platforms:' block. Refusing to merge. Add 'webhook: { enabled: true, extra: { host: 127.0.0.1, port: $port, secret: ... } }' under it yourself, or run 'hermes gateway setup'."
+  out_err "$yaml_file has a hand-written 'platforms:' block. Refusing to merge. Add a 'webhook' subkey under it (enabled true, loopback host, port $port, an HMAC secret) yourself, or run 'hermes gateway setup'."
 else
   write_managed_yaml_block "$yaml_file" "$port" "$secret"
   yaml_status="wrote-managed-block"
 fi
 add_step config_yaml "$yaml_status"
 
-# Step 4: ~/.hermes/.env managed block.
+# Step 4: gateway env-file managed block.
 env_file="$(hermes_home)/.env"
 if has_managed_block "$env_file"; then
   env_status="managed-block-exists"
