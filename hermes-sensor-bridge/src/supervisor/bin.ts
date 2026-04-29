@@ -2,24 +2,26 @@
 
 import { createWriteStream, type WriteStream } from "node:fs";
 import {
+  ensureConfigFile,
   ensureBridgeDirs,
   getBridgePaths,
   isProcessAlive,
-  loadOrCreateControlToken,
-  loadOrCreateHmacSecret,
-  readManifest,
   readPidFile,
   removePidFile,
+  listBridgeSensors,
+  readConfig,
   writePidFile,
 } from "./manifest.js";
 import { SensorSupervisor } from "./spawn.js";
 import { startControlServer } from "./control-server.js";
-import { startGatewayWatch } from "./gateway-watch.js";
+import { startConfigWatcher } from "./config-watcher.js";
+import { loadOrCreateBridgeState, updateBridgeState } from "./state.js";
 
 async function main(): Promise<void> {
-  const port = parsePort(process.argv.slice(2));
+  parseSupervisorArgs(process.argv.slice(2));
   const paths = getBridgePaths();
   await ensureBridgeDirs(paths);
+  await ensureConfigFile(paths);
 
   const existingPid = await readPidFile(paths);
   if (existingPid && existingPid !== process.pid && (await isProcessAlive(existingPid))) {
@@ -32,18 +34,26 @@ async function main(): Promise<void> {
   try {
     await writePidFile(paths, process.pid);
 
-    const hmacSecret = await loadOrCreateHmacSecret(paths);
-    const controlToken = await loadOrCreateControlToken(paths);
-    const supervisor = new SensorSupervisor({ paths, hmacSecret, log });
+    const state = await loadOrCreateBridgeState(paths);
+    await updateBridgeState(paths, {
+      supervisor_pid: process.pid,
+      supervisor_started_at: new Date().toISOString(),
+    });
+
+    const supervisor = new SensorSupervisor({
+      paths,
+      hmacSecret: state.hmac_secret,
+      log,
+    });
     const startedAt = Date.now();
 
-    const manifest = await readManifest(paths);
     const controlServer = await startControlServer({
       paths,
       supervisor,
-      token: controlToken,
-      port,
+      token: state.control_token,
+      port: state.control_port,
       startedAt,
+      supervisorPid: process.pid,
       log,
     });
 
@@ -53,7 +63,7 @@ async function main(): Promise<void> {
       shuttingDown = true;
       log(`[w2a/supervisor] shutting down (${reason})`);
 
-      stopGatewayWatch();
+      stopConfigWatcher();
       await controlServer.close().catch(() => {});
       await supervisor.terminateAll().catch((error) => {
         log(
@@ -67,10 +77,13 @@ async function main(): Promise<void> {
       process.exit(0);
     };
 
-    const stopGatewayWatch = await startGatewayWatch({
-      gatewayPidFile: paths.gatewayPidFile,
+    const stopConfigWatcher = await startConfigWatcher({
+      paths,
       log,
-      onGatewayExit: () => shutdown("gateway exited"),
+      onConfig: async (config) => {
+        const applied = await supervisor.applyConfig(listBridgeSensors(config));
+        log(`[w2a/config-watch] applied: ${JSON.stringify(applied)}`);
+      },
     });
 
     process.on("SIGTERM", () => {
@@ -80,7 +93,8 @@ async function main(): Promise<void> {
       void shutdown("SIGINT");
     });
 
-    const applied = await supervisor.applyConfig(manifest.sensors);
+    const config = await readConfig(paths);
+    const applied = await supervisor.applyConfig(listBridgeSensors(config));
     log(`[w2a/supervisor] initial apply: ${JSON.stringify(applied)}`);
 
     await new Promise<void>(() => {});
@@ -100,16 +114,13 @@ function createLogger(stream: WriteStream): (line: string) => void {
   };
 }
 
-function parsePort(args: string[]): number {
-  const index = args.indexOf("--port");
-  if (index === -1) return 8645;
-
-  const raw = args[index + 1];
-  const port = Number(raw);
-  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
-    throw new Error(`Invalid --port value: ${String(raw)}`);
+function parseSupervisorArgs(args: string[]): void {
+  for (const arg of args) {
+    if (arg === "--foreground") {
+      continue;
+    }
+    throw new Error(`Unknown supervisor argument: ${arg}`);
   }
-  return port;
 }
 
 main().catch((error) => {

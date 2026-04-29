@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { SensorSupervisor } from "./spawn.js";
 import type { BridgePaths } from "./manifest.js";
-import { readManifest } from "./manifest.js";
+import { listBridgeSensors, readConfig } from "./manifest.js";
 
 interface ControlServerOptions {
   paths: BridgePaths;
@@ -9,6 +9,7 @@ interface ControlServerOptions {
   token: string;
   port: number;
   startedAt: number;
+  supervisorPid: number;
   log: (line: string) => void;
 }
 
@@ -60,13 +61,16 @@ async function handleRequest(
       ok: true,
       uptime_ms: Date.now() - options.startedAt,
       child_count: options.supervisor.snapshot().length,
+      supervisor_pid: options.supervisorPid,
     });
     return;
   }
 
   if (req.method === "GET" && url.pathname === "/_w2a/list") {
+    const config = await readConfig(options.paths);
     writeJson(res, 200, {
       ok: true,
+      sensors: listBridgeSensors(config),
       handles: options.supervisor.snapshot(),
     });
     return;
@@ -74,8 +78,8 @@ async function handleRequest(
 
   if (req.method === "POST" && url.pathname === "/_w2a/reload") {
     try {
-      const manifest = await readManifest(options.paths);
-      const applied = await options.supervisor.applyConfig(manifest.sensors);
+      const config = await readConfig(options.paths);
+      const applied = await options.supervisor.applyConfig(listBridgeSensors(config));
       writeJson(res, 200, {
         ok: true,
         applied,

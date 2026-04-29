@@ -28,12 +28,12 @@
   "type": "module",
   "bin": {
     "world2agent-sensor-runner": "./dist/runner/bin.js",
-    "world2agent-hermes-supervisor": "./dist/supervisor/bin.js",
-    "world2agent-hermes": "./dist/cli/bin.js"
+    "world2agent-hermes-supervisor": "./dist/supervisor/bin.js"
   },
   "scripts": {
     "build": "tsc --build",
     "clean": "rm -rf dist *.tsbuildinfo",
+    "test": "pnpm run build && node e2e/test-delivery.mjs && node e2e/test-config-watcher.mjs && bash e2e/test-skill-scripts.sh",
     "prepublishOnly": "pnpm run clean && pnpm run build"
   },
   "dependencies": {

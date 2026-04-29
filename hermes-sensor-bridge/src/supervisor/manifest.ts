@@ -1,144 +1,157 @@
-import { createHash, randomBytes } from "node:crypto";
-import { access, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { access, chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { packageToSkillId } from "@world2agent/sdk";
 
-export interface SensorEntry {
+export interface HermesSensorConfig {
   sensor_id: string;
-  pkg: string;
   skill_id: string;
-  subscription_name?: string;
   webhook_url: string;
-  enabled: boolean;
-  config: Record<string, unknown>;
+  subscription_name?: string;
 }
 
-export interface SensorManifest {
-  version: 1;
-  sensors: SensorEntry[];
+export interface SharedSensorEntry {
+  package: string;
+  config?: Record<string, unknown>;
+  skills?: string[];
+  enabled?: boolean;
+  _hermes?: Partial<HermesSensorConfig>;
+}
+
+export interface SharedConfig {
+  sensors: SharedSensorEntry[];
+  name?: string;
+  instructions?: string;
+}
+
+export interface BridgeSensorEntry {
+  package: string;
+  config: Record<string, unknown>;
+  skills: string[];
+  enabled: boolean;
+  _hermes: HermesSensorConfig;
 }
 
 export interface BridgePaths {
   baseDir: string;
-  manifestFile: string;
-  hmacSecretFile: string;
-  controlTokenFile: string;
+  configFile: string;
+  bridgeStateFile: string;
   supervisorPidFile: string;
   supervisorLogFile: string;
   stateDir: string;
-  hermesHome: string;
-  hermesSkillsDir: string;
-  gatewayPidFile: string;
-  webhookSubscriptionsFile: string;
-  hermesEnvFile: string;
-  hermesConfigYamlFile: string;
+  npmDir: string;
 }
 
-const DEFAULT_MANIFEST: SensorManifest = {
-  version: 1,
+const DEFAULT_CONFIG: SharedConfig = {
   sensors: [],
 };
 
 export function getBridgePaths(env: NodeJS.ProcessEnv = process.env): BridgePaths {
-  const hermesHome = env.HERMES_HOME ?? join(homedir(), ".hermes");
-  const baseDir = env.HERMES_HOME
-    ? join(hermesHome, "world2agent")
-    : join(homedir(), ".world2agent");
+  const userHome = env.HOME ?? homedir();
+  const baseDir = join(userHome, ".world2agent");
 
   return {
     baseDir,
-    manifestFile: join(baseDir, "sensors.json"),
-    hmacSecretFile: join(baseDir, ".hmac_secret"),
-    controlTokenFile: join(baseDir, ".control_token"),
+    configFile: join(baseDir, "config.json"),
+    bridgeStateFile: join(baseDir, ".bridge-state.json"),
     supervisorPidFile: join(baseDir, "supervisor.pid"),
     supervisorLogFile: join(baseDir, "supervisor.log"),
     stateDir: join(baseDir, "state"),
-    hermesHome,
-    hermesSkillsDir: join(hermesHome, "skills"),
-    gatewayPidFile: join(hermesHome, "gateway.pid"),
-    webhookSubscriptionsFile: join(hermesHome, "webhook_subscriptions.json"),
-    hermesEnvFile: join(hermesHome, ".env"),
-    hermesConfigYamlFile: join(hermesHome, "config.yaml"),
+    npmDir: join(baseDir, "_npm"),
   };
 }
 
 export async function ensureBridgeDirs(paths: BridgePaths): Promise<void> {
   await mkdir(paths.baseDir, { recursive: true });
   await mkdir(paths.stateDir, { recursive: true });
-  await mkdir(paths.hermesSkillsDir, { recursive: true });
+  await mkdir(paths.npmDir, { recursive: true });
 }
 
-export async function readManifest(paths: BridgePaths): Promise<SensorManifest> {
+export async function ensureConfigFile(paths: BridgePaths): Promise<void> {
+  await ensureBridgeDirs(paths);
+  if (await pathExists(paths.configFile)) {
+    return;
+  }
+  await writeConfig(paths, structuredClone(DEFAULT_CONFIG));
+}
+
+export async function readConfig(paths: BridgePaths): Promise<SharedConfig> {
   try {
-    const raw = await readFile(paths.manifestFile, "utf8");
-    return parseManifest(JSON.parse(raw) as unknown);
+    const raw = await readFile(paths.configFile, "utf8");
+    return parseConfig(JSON.parse(raw) as unknown);
   } catch (error) {
     if (isMissingFile(error)) {
-      return structuredClone(DEFAULT_MANIFEST);
+      return structuredClone(DEFAULT_CONFIG);
     }
     throw error;
   }
 }
 
-export async function writeManifest(
-  paths: BridgePaths,
-  manifest: SensorManifest,
-): Promise<void> {
+export async function writeConfig(paths: BridgePaths, config: SharedConfig): Promise<void> {
   await ensureBridgeDirs(paths);
-  const normalized: SensorManifest = {
-    version: 1,
-    sensors: manifest.sensors.map(normalizeSensorEntry),
-  };
-  await writeTextAtomic(paths.manifestFile, JSON.stringify(normalized, null, 2) + "\n");
+  const normalized = normalizeConfig(config);
+  await writeTextAtomic(paths.configFile, JSON.stringify(normalized, null, 2) + "\n");
 }
 
-export function upsertSensorEntry(
-  manifest: SensorManifest,
-  entry: SensorEntry,
-): SensorManifest {
-  const normalized = normalizeSensorEntry(entry);
-  const sensors = manifest.sensors.filter((item) => item.sensor_id !== normalized.sensor_id);
-  sensors.push(normalized);
-  sensors.sort((a, b) => a.sensor_id.localeCompare(b.sensor_id));
+export function upsertConfigSensor(
+  config: SharedConfig,
+  entry: SharedSensorEntry,
+): SharedConfig {
+  const normalizedEntry = normalizeSharedSensorEntry(entry);
+  const sensors = config.sensors.filter((item) => item.package !== normalizedEntry.package);
+  sensors.push(normalizedEntry);
+  sensors.sort((left, right) => left.package.localeCompare(right.package));
   return {
-    version: 1,
+    ...config,
     sensors,
   };
 }
 
-export function removeSensorEntry(
-  manifest: SensorManifest,
-  sensorId: string,
+export function removeConfigSensor(
+  config: SharedConfig,
+  packageName: string,
 ): {
-  manifest: SensorManifest;
-  removed: SensorEntry | null;
+  config: SharedConfig;
+  removed: SharedSensorEntry | null;
 } {
-  const removed = manifest.sensors.find((entry) => entry.sensor_id === sensorId) ?? null;
+  const removed = config.sensors.find((entry) => entry.package === packageName) ?? null;
   return {
-    manifest: {
-      version: 1,
-      sensors: manifest.sensors.filter((entry) => entry.sensor_id !== sensorId),
+    config: {
+      ...config,
+      sensors: config.sensors.filter((entry) => entry.package !== packageName),
     },
     removed,
   };
 }
 
-export function normalizeSensorEntry(entry: SensorEntry): SensorEntry {
-  return {
-    sensor_id: entry.sensor_id,
-    pkg: entry.pkg,
-    skill_id: entry.skill_id?.trim() ? entry.skill_id : packageToSkillId(entry.pkg),
-    subscription_name: entry.subscription_name,
-    webhook_url: entry.webhook_url,
-    enabled: entry.enabled !== false,
-    config: entry.config ?? {},
-  };
+export function listBridgeSensors(config: SharedConfig): BridgeSensorEntry[] {
+  const sensors: BridgeSensorEntry[] = [];
+  for (const entry of config.sensors) {
+    const bridgeEntry = toBridgeSensorEntry(entry);
+    if (bridgeEntry) {
+      sensors.push(bridgeEntry);
+    }
+  }
+  sensors.sort((left, right) =>
+    left._hermes.sensor_id.localeCompare(right._hermes.sensor_id),
+  );
+  return sensors;
 }
 
-export function defaultSensorId(pkg: string): string {
-  const suffix = pkg.split("/").pop() ?? pkg;
-  return suffix.replace(/^sensor-/, "");
+export function normalizeSharedSensorEntry(entry: SharedSensorEntry): SharedSensorEntry {
+  const normalized: SharedSensorEntry = {
+    package: expectString(entry.package, "sensor.package"),
+    config: normalizeConfigObject(entry.config),
+    skills: normalizeSkills(entry.skills),
+    enabled: entry.enabled !== false,
+  };
+
+  const hermes = normalizeHermesConfig(entry._hermes);
+  if (hermes) {
+    normalized._hermes = hermes;
+  }
+
+  return normalized;
 }
 
 export function stableStringify(value: unknown): string {
@@ -159,32 +172,6 @@ export function hashConfig(config: unknown): string {
   return createHash("sha1").update(stableStringify(config)).digest("hex");
 }
 
-export async function loadOrCreateHmacSecret(
-  paths: BridgePaths,
-  override?: string,
-): Promise<string> {
-  if (override) {
-    await writeTextAtomic(paths.hmacSecretFile, `${override}\n`);
-    return override;
-  }
-
-  const existing = await readTrimmedText(paths.hmacSecretFile);
-  if (existing) return existing;
-
-  const secret = randomBytes(32).toString("hex");
-  await writeTextAtomic(paths.hmacSecretFile, `${secret}\n`);
-  return secret;
-}
-
-export async function loadOrCreateControlToken(paths: BridgePaths): Promise<string> {
-  const existing = await readTrimmedText(paths.controlTokenFile);
-  if (existing) return existing;
-
-  const token = randomBytes(32).toString("hex");
-  await writeTextAtomic(paths.controlTokenFile, `${token}\n`);
-  return token;
-}
-
 export async function readTrimmedText(path: string): Promise<string | null> {
   try {
     return (await readFile(path, "utf8")).trim() || null;
@@ -194,11 +181,18 @@ export async function readTrimmedText(path: string): Promise<string | null> {
   }
 }
 
-export async function writeTextAtomic(path: string, content: string): Promise<void> {
+export async function writeTextAtomic(
+  path: string,
+  content: string,
+  mode?: number,
+): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(tmp, content, "utf8");
+  await writeFile(tmp, content, { encoding: "utf8", mode });
   await rename(tmp, path);
+  if (mode !== undefined) {
+    await chmod(path, mode);
+  }
 }
 
 export async function writePidFile(paths: BridgePaths, pid: number): Promise<void> {
@@ -236,62 +230,132 @@ export async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-function parseManifest(raw: unknown): SensorManifest {
+function parseConfig(raw: unknown): SharedConfig {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    throw new Error("Manifest must be a JSON object");
+    throw new Error("config.json must be a JSON object");
   }
 
-  const version = (raw as Record<string, unknown>).version;
-  const sensors = (raw as Record<string, unknown>).sensors;
-  if (version !== 1) {
-    throw new Error(`Unsupported manifest version: ${String(version)}`);
-  }
+  const value = raw as Record<string, unknown>;
+  const sensors = value.sensors;
   if (!Array.isArray(sensors)) {
-    throw new Error("Manifest field `sensors` must be an array");
+    throw new Error("config.json field `sensors` must be an array");
   }
 
+  const parsed: SharedConfig = {
+    sensors: sensors.map((entry, index) => parseSharedSensorEntry(entry, index)),
+  };
+
+  if (typeof value.name === "string" && value.name.trim() !== "") {
+    parsed.name = value.name;
+  }
+  if (typeof value.instructions === "string" && value.instructions.trim() !== "") {
+    parsed.instructions = value.instructions;
+  }
+
+  return parsed;
+}
+
+function parseSharedSensorEntry(raw: unknown, index: number): SharedSensorEntry {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error(`config.json sensors[${index}] must be an object`);
+  }
+
+  const value = raw as Record<string, unknown>;
+  const entry: SharedSensorEntry = {
+    package: expectString(value.package, `sensors[${index}].package`),
+    config: normalizeConfigObject(value.config),
+    skills: normalizeSkills(value.skills, `sensors[${index}].skills`),
+    enabled: value.enabled === undefined ? true : Boolean(value.enabled),
+  };
+
+  if (value._hermes !== undefined) {
+    if (!value._hermes || typeof value._hermes !== "object" || Array.isArray(value._hermes)) {
+      throw new Error(`sensors[${index}]._hermes must be an object when present`);
+    }
+    entry._hermes = normalizeHermesConfig(value._hermes as Partial<HermesSensorConfig>);
+  }
+
+  return entry;
+}
+
+function normalizeConfig(config: SharedConfig): SharedConfig {
   return {
-    version: 1,
-    sensors: sensors.map((entry, index) => parseSensorEntry(entry, index)),
+    ...(config.name ? { name: config.name } : {}),
+    ...(config.instructions ? { instructions: config.instructions } : {}),
+    sensors: config.sensors.map(normalizeSharedSensorEntry),
   };
 }
 
-function parseSensorEntry(raw: unknown, index: number): SensorEntry {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    throw new Error(`Manifest sensor[${index}] must be an object`);
+function toBridgeSensorEntry(entry: SharedSensorEntry): BridgeSensorEntry | null {
+  if (entry.enabled === false) {
+    return null;
   }
 
-  const entry = raw as Record<string, unknown>;
-  const sensorId = expectString(entry.sensor_id, `sensor[${index}].sensor_id`);
-  const pkg = expectString(entry.pkg, `sensor[${index}].pkg`);
-  const webhookUrl = expectString(entry.webhook_url, `sensor[${index}].webhook_url`);
-  const enabled = entry.enabled === undefined ? true : Boolean(entry.enabled);
-  const config = entry.config;
-
-  if (!config || typeof config !== "object" || Array.isArray(config)) {
-    throw new Error(`sensor[${index}].config must be an object`);
+  const hermes = normalizeHermesConfig(entry._hermes);
+  if (!hermes) {
+    return null;
   }
-
-  const subscriptionName =
-    entry.subscription_name === undefined
-      ? undefined
-      : expectString(entry.subscription_name, `sensor[${index}].subscription_name`);
-
-  const skillIdRaw = entry.skill_id;
-  const skillId =
-    typeof skillIdRaw === "string" && skillIdRaw.trim() !== ""
-      ? skillIdRaw
-      : packageToSkillId(pkg);
 
   return {
-    sensor_id: sensorId,
-    pkg,
-    skill_id: skillId,
-    subscription_name: subscriptionName,
-    webhook_url: webhookUrl,
-    enabled,
-    config: config as Record<string, unknown>,
+    package: entry.package,
+    config: normalizeConfigObject(entry.config),
+    skills: normalizeSkills(entry.skills),
+    enabled: true,
+    _hermes: hermes,
   };
+}
+
+function normalizeHermesConfig(
+  raw: Partial<HermesSensorConfig> | undefined,
+): HermesSensorConfig | undefined {
+  if (!raw || typeof raw !== "object") {
+    return undefined;
+  }
+
+  const sensorId = optionalNonEmptyString(raw.sensor_id);
+  const skillId = optionalNonEmptyString(raw.skill_id);
+  const webhookUrl = optionalNonEmptyString(raw.webhook_url);
+  if (!sensorId || !skillId || !webhookUrl) {
+    return undefined;
+  }
+
+  const normalized: HermesSensorConfig = {
+    sensor_id: sensorId,
+    skill_id: skillId,
+    webhook_url: webhookUrl,
+  };
+
+  const subscriptionName = optionalNonEmptyString(raw.subscription_name);
+  if (subscriptionName) {
+    normalized.subscription_name = subscriptionName;
+  }
+
+  return normalized;
+}
+
+function normalizeConfigObject(value: unknown): Record<string, unknown> {
+  if (value === undefined) {
+    return {};
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("sensor.config must be a JSON object");
+  }
+  return value as Record<string, unknown>;
+}
+
+function normalizeSkills(
+  value: unknown,
+  label = "sensor.skills",
+): string[] {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`${label} must be an array of strings`);
+  }
+  return value
+    .map((item, index) => expectString(item, `${label}[${index}]`))
+    .sort((left, right) => left.localeCompare(right));
 }
 
 function expectString(value: unknown, label: string): string {
@@ -299,6 +363,10 @@ function expectString(value: unknown, label: string): string {
     throw new Error(`${label} must be a non-empty string`);
   }
   return value;
+}
+
+function optionalNonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() !== "" ? value : undefined;
 }
 
 function isMissingFile(error: unknown): boolean {

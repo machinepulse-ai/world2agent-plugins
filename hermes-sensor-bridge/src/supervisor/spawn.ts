@@ -1,8 +1,10 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHmac } from "node:crypto";
 import { once } from "node:events";
+import { createRequire } from "node:module";
+import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { BridgePaths, SensorEntry } from "./manifest.js";
+import type { BridgePaths, BridgeSensorEntry } from "./manifest.js";
 import { hashConfig } from "./manifest.js";
 
 export interface ChildHandle {
@@ -55,9 +57,11 @@ export class SensorSupervisor {
   private readonly hmacSecret: string;
   private readonly log: (line: string) => void;
   private readonly handles = new Map<string, ChildHandle>();
-  private readonly desiredEntries = new Map<string, SensorEntry>();
+  private readonly desiredEntries = new Map<string, BridgeSensorEntry>();
   private readonly restartTimers = new Map<string, NodeJS.Timeout>();
   private readonly runnerBin = fileURLToPath(new URL("../runner/bin.js", import.meta.url));
+  private readonly require = createRequire(import.meta.url);
+  private applyLock = Promise.resolve();
 
   constructor(options: SensorSupervisorOptions) {
     this.paths = options.paths;
@@ -81,8 +85,9 @@ export class SensorSupervisor {
       .sort((a, b) => a.sensor_id.localeCompare(b.sensor_id));
   }
 
-  async spawn(entry: SensorEntry, restartCount = 0): Promise<ChildHandle> {
-    this.clearRestartTimer(entry.sensor_id);
+  async spawn(entry: BridgeSensorEntry, restartCount = 0): Promise<ChildHandle> {
+    this.clearRestartTimer(entry._hermes.sensor_id);
+    const resolvedPackage = this.resolvePackageSpecifier(entry.package);
 
     // The runner does not need webhook URL or HMAC secret — those live in
     // the supervisor where signal delivery happens. Keeping secrets out of
@@ -90,20 +95,20 @@ export class SensorSupervisor {
     const proc = spawn(process.execPath, [this.runnerBin], {
       env: {
         ...process.env,
-        W2A_PACKAGE: entry.pkg,
-        W2A_SENSOR_ID: entry.sensor_id,
-        W2A_STATE_PATH: `${this.paths.stateDir}/${entry.sensor_id}.json`,
+        W2A_PACKAGE: resolvedPackage,
+        W2A_SENSOR_ID: entry._hermes.sensor_id,
+        W2A_STATE_PATH: `${this.paths.stateDir}/${entry._hermes.sensor_id}.json`,
         W2A_LOG_LEVEL: process.env.W2A_LOG_LEVEL ?? "info",
       },
       stdio: ["pipe", "pipe", "pipe"],
     });
 
     const handle: ChildHandle = {
-      sensorId: entry.sensor_id,
-      pkg: entry.pkg,
-      skillId: entry.skill_id,
+      sensorId: entry._hermes.sensor_id,
+      pkg: entry.package,
+      skillId: entry._hermes.skill_id,
       configHash: hashConfig(entry.config),
-      webhookUrl: entry.webhook_url,
+      webhookUrl: entry._hermes.webhook_url,
       process: proc,
       startedAt: Date.now(),
       restartCount,
@@ -111,7 +116,7 @@ export class SensorSupervisor {
       stopping: false,
     };
 
-    this.handles.set(entry.sensor_id, handle);
+    this.handles.set(entry._hermes.sensor_id, handle);
     this.attachChildStreams(handle);
     proc.on("exit", (code, signal) => {
       void this.handleExit(handle, code, signal);
@@ -119,7 +124,7 @@ export class SensorSupervisor {
 
     proc.stdin.end(JSON.stringify(entry.config ?? {}) + "\n");
     this.log(
-      `[w2a/${entry.sensor_id}] spawned pid=${proc.pid ?? "unknown"} pkg=${entry.pkg}`,
+      `[w2a/${entry._hermes.sensor_id}] spawned pid=${proc.pid ?? "unknown"} pkg=${entry.package}`,
     );
     return handle;
   }
@@ -159,7 +164,32 @@ export class SensorSupervisor {
     this.handles.delete(handle.sensorId);
   }
 
-  async applyConfig(entries: SensorEntry[]): Promise<ApplyResult> {
+  async applyConfig(entries: BridgeSensorEntry[]): Promise<ApplyResult> {
+    let release!: () => void;
+    const previous = this.applyLock;
+    this.applyLock = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous.catch(() => {});
+
+    try {
+      return await this.applyConfigUnlocked(entries);
+    } finally {
+      release();
+    }
+  }
+
+  async terminateAll(graceMs = 5_000): Promise<void> {
+    this.desiredEntries.clear();
+    for (const sensorId of this.restartTimers.keys()) {
+      this.clearRestartTimer(sensorId);
+    }
+    for (const handle of [...this.handles.values()]) {
+      await this.terminate(handle, graceMs);
+    }
+  }
+
+  private async applyConfigUnlocked(entries: BridgeSensorEntry[]): Promise<ApplyResult> {
     const result: ApplyResult = {
       started: [],
       restarted: [],
@@ -169,9 +199,7 @@ export class SensorSupervisor {
 
     this.desiredEntries.clear();
     for (const entry of entries) {
-      if (entry.enabled !== false) {
-        this.desiredEntries.set(entry.sensor_id, entry);
-      }
+      this.desiredEntries.set(entry._hermes.sensor_id, entry);
     }
 
     for (const sensorId of this.restartTimers.keys()) {
@@ -217,21 +245,11 @@ export class SensorSupervisor {
     return result;
   }
 
-  async terminateAll(graceMs = 5_000): Promise<void> {
-    this.desiredEntries.clear();
-    for (const sensorId of this.restartTimers.keys()) {
-      this.clearRestartTimer(sensorId);
-    }
-    for (const handle of [...this.handles.values()]) {
-      await this.terminate(handle, graceMs);
-    }
-  }
-
-  private matchesEntry(handle: ChildHandle, entry: SensorEntry): boolean {
+  private matchesEntry(handle: ChildHandle, entry: BridgeSensorEntry): boolean {
     return (
-      handle.pkg === entry.pkg &&
-      handle.skillId === entry.skill_id &&
-      handle.webhookUrl === entry.webhook_url &&
+      handle.pkg === entry.package &&
+      handle.skillId === entry._hermes.skill_id &&
+      handle.webhookUrl === entry._hermes.webhook_url &&
       handle.configHash === hashConfig(entry.config)
     );
   }
@@ -352,6 +370,20 @@ export class SensorSupervisor {
     if (!timer) return;
     clearTimeout(timer);
     this.restartTimers.delete(sensorId);
+  }
+
+  private resolvePackageSpecifier(pkg: string): string {
+    if (pkg.startsWith(".") || pkg.startsWith("/") || isAbsolute(pkg)) {
+      return pkg;
+    }
+
+    try {
+      return this.require.resolve(pkg, {
+        paths: [this.paths.npmDir],
+      });
+    } catch {
+      return pkg;
+    }
   }
 }
 

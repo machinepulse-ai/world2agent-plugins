@@ -6,50 +6,41 @@ Runs W2A sensors as supervised Node subprocesses and delivers their signals into
 
 > Status: in development. See [`docs/channel-hermes-agent-design.md`](../docs/channel-hermes-agent-design.md) for the design.
 
+## v2 Model
+
+- Shared user intent lives in `~/.world2agent/config.json`.
+- Hermes-specific metadata is stored per sensor under `_hermes` (`sensor_id`, `skill_id`, `webhook_url`, optional `subscription_name`).
+- Runtime secrets and control metadata live in `~/.world2agent/.bridge-state.json` (`hmac_secret`, `control_token`, `control_port`).
+- Sensor packages are installed by the SKILL.md flow into `~/.world2agent/_npm` (e.g. `npm install --prefix ~/.world2agent/_npm <pkg>`); the supervisor resolves bare specifiers against that prefix at spawn time.
+- `world2agent-hermes-supervisor` watches `config.json` and reconciles child sensors automatically — no restart needed when sensors are added, edited, or removed.
+
 ## Layout
 
 ```
 src/
   runner/        Node sensor-runner subprocess (one per enabled sensor)
   supervisor/    Independent local daemon — spawns/monitors runners,
-                 exposes 127.0.0.1 control HTTP for reload/list/health
-  cli/           `world2agent-hermes` CLI (start/stop/status/add/remove/list)
-skills/
-  world2agent-manage/   Agent-facing skill that wraps the CLI for
-                        natural-language sensor management
+                 watches ~/.world2agent/config.json, exposes 127.0.0.1
+                 control HTTP for reload/list/health
 ```
 
 ## Bins
 
-- `world2agent-hermes` — user-facing CLI
-- `world2agent-hermes-supervisor` — daemon (started by `world2agent-hermes start`)
+- `world2agent-hermes-supervisor` — daemon
 - `world2agent-sensor-runner` — per-sensor subprocess (spawned by the supervisor)
 
-## Current CLI Flow
+User-facing install/remove UX is owned by the World2Agent SKILL.md flow, which edits `~/.world2agent/config.json` (and installs the package under `~/.world2agent/_npm`). The supervisor's file watcher picks the change up and reconciles.
 
-`world2agent-hermes add` currently expects a hand-written config JSON file:
+## Control HTTP
 
-```bash
-world2agent-hermes add @world2agent/sensor-hackernews \
-  --config-file ./hackernews.json
-```
+The supervisor binds `127.0.0.1:<control_port>` (default `8645`, recorded in `.bridge-state.json`) and accepts:
 
-Supported add-time overrides:
+- `GET  /_w2a/health` — uptime, child count, supervisor pid
+- `GET  /_w2a/list` — desired sensors (from `config.json`) and live child handles
+- `POST /_w2a/reload` — re-read `config.json` and reconcile (the file watcher does this automatically; this endpoint is for forcing a reapply)
 
-- `--config-file <path>` — bypasses interactive setup and writes the manifest directly
-- `--webhook-url <url>` — provide the target webhook URL yourself
-- `--hmac-secret <secret>` — override the shared bridge HMAC secret
-- `--no-hermes-subscribe` — skip the `hermes webhook subscribe` shellout entirely
-
-The last three flags are intended mainly for local development and testing. In
-the normal path, the bridge calls `hermes webhook subscribe`, stores the
-returned webhook URL in the manifest, and reloads the local supervisor.
-
-When a sensor package does not ship a machine-runnable setup helper, the bridge
-generates a generic Hermes skill for that sensor instead of a fully customized
-handler. The package's `SETUP.md` remains the source of truth for richer,
-sensor-specific behavior.
+All endpoints require `X-W2A-Token: <control_token>`.
 
 ## Relation to `claude-code-channel`
 
-Sibling package. `claude-code-channel` is an in-process MCP channel for Claude Code; this package is an out-of-process bridge for Hermes. Both load the same `@world2agent/sensor-*` packages without modification.
+Sibling package. `claude-code-channel` is an in-process MCP channel for Claude Code; this package is an out-of-process bridge for Hermes. Both share `~/.world2agent/config.json` and load the same `@world2agent/sensor-*` packages without modification.
