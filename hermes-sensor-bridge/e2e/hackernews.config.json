@@ -1,0 +1,5 @@
+{
+  "top_n": 5,
+  "min_score": 1,
+  "interval_seconds": 30
+}
