@@ -160,12 +160,14 @@ If reload failed (timeout is the common case), **DO NOT run
 `openclaw gateway restart` yourself**. Restarting the gateway from inside
 this chat would kill the gateway process — including this very chat
 session — and the user would see your reply truncated mid-sentence. Always
-hand the restart back to the user. Tell them, in their language, something
-like:
+hand the restart back to the user. Tell them — in **their** language, not
+necessarily English — something equivalent to:
 
-> 装好了。新 sensor 需要 gateway 重启才会开始 polling。请你在终端跑
-> `openclaw gateway restart`（我没法自己跑这条命令——它会把当前这个
-> chat session 一起重启，对话会被截断）。重启后 ~60 秒内会拉到第一条信号。
+> The sensor is registered, but it needs a gateway restart before it
+> starts polling. Please run `openclaw gateway restart` in your terminal
+> (I can't run it myself — that command would kill this chat session
+> mid-reply). The first signal will arrive within ~60 seconds after the
+> restart.
 
 Then summarize for the user:
 

@@ -74,7 +74,7 @@ openclaw chat --agent main
 ```
 
 ```
-> 帮我订阅 Hacker News，我关心 AI 和安全话题
+> subscribe me to Hacker News — I care about AI and security stories
 ```
 
 The plugin ships a `world2agent-manage` skill that activates on this kind of intent. Main agent will:

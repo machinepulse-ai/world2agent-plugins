@@ -72,7 +72,7 @@ openclaw gateway restart
 Then in a chat session with your `main` agent, just describe what you want to subscribe to:
 
 ```
-> 帮我订阅 Hacker News，我关心 AI 和安全话题
+> subscribe me to Hacker News — I care about AI and security stories
 ```
 
 The bundled `world2agent-manage` skill takes over: reads the sensor's `SETUP.md`, asks you 1–3 questions to personalize the handler, writes both the config and the personalized SKILL.md, and registers the sensor — without any manual CLI work.
