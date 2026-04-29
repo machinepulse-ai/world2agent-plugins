@@ -23,24 +23,6 @@ openclaw plugins install @world2agent/openclaw-plugin --dangerously-force-unsafe
 openclaw gateway restart
 ```
 
-#### Contributors / pre-release testing (from local source)
-
-If you're hacking on this plugin and haven't published to npm yet:
-
-```bash
-cd world2agent-plugins/openclaw-plugin
-pnpm install
-pnpm build
-
-# Use an ABSOLUTE path. OpenClaw's `plugins install` also accepts hook packs
-# (a different concept) — a relative or `~` path can be misclassified and
-# yield a confusing "HOOK.md missing in ..." error. Absolute path tells
-# OpenClaw "this is the plugin you just built."
-openclaw plugins install -l --dangerously-force-unsafe-install \
-  "$(pwd)"
-openclaw gateway restart
-```
-
 Verify it loaded:
 
 ```bash
