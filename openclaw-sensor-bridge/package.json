@@ -1,0 +1,53 @@
+{
+  "name": "@world2agent/openclaw-sensor-bridge",
+  "version": "0.1.0-alpha.0",
+  "description": "World2Agent bridge for OpenClaw — runs sensors as supervised subprocesses and delivers their signals into OpenClaw via the gateway's /hooks/agent webhook",
+  "license": "Apache-2.0",
+  "author": "MachinePulse Pte. Ltd.",
+  "homepage": "https://github.com/machinepulse-ai/world2agent",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/machinepulse-ai/world2agent-plugins.git",
+    "directory": "openclaw-sensor-bridge"
+  },
+  "bugs": {
+    "url": "https://github.com/machinepulse-ai/world2agent-plugins/issues"
+  },
+  "keywords": [
+    "world2agent",
+    "w2a",
+    "openclaw",
+    "webhook",
+    "bridge",
+    "sensor"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "type": "module",
+  "bin": {
+    "world2agent-sensor-runner": "./dist/runner/bin.js",
+    "world2agent-openclaw-supervisor": "./dist/supervisor/bin.js"
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "test": "pnpm run build && node e2e/test-delivery.mjs && node e2e/test-config-watcher.mjs",
+    "prepublishOnly": "pnpm run clean && pnpm run build"
+  },
+  "dependencies": {
+    "@world2agent/sdk": "0.1.0-alpha.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "typescript": "^5.8.3"
+  },
+  "files": [
+    "dist",
+    "skills",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}
