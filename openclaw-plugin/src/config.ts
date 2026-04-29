@@ -6,8 +6,6 @@ import type {
 } from "./openclaw/plugin-sdk/types.js";
 import type { DeliverConfig, RequiredWorld2AgentPluginConfig } from "./types.js";
 
-export const REQUIRED_CONTEXT_INJECTION = "continuation-skip";
-
 export async function loadEffectiveOpenClawConfig(
   api: OpenClawPluginApi,
 ): Promise<OpenClawConfig> {
@@ -21,17 +19,6 @@ export async function loadEffectiveOpenClawConfig(
     return api.runtime.config.loadConfig();
   }
   return api.config ?? {};
-}
-
-export function assertContextInjectionCompatible(config: OpenClawConfig): void {
-  const got = config.agents?.defaults?.contextInjection;
-  if (got === REQUIRED_CONTEXT_INJECTION) return;
-
-  throw new Error(
-    "OpenClaw config field `agents.defaults.contextInjection` must be set to " +
-      `"${REQUIRED_CONTEXT_INJECTION}" for @world2agent/openclaw-plugin. ` +
-      `Current value: ${JSON.stringify(got)}. Update that exact field and retry.`,
-  );
 }
 
 export function normalizePluginConfig(
