@@ -1,6 +1,6 @@
 {
   "name": "@world2agent/openclaw-plugin",
-  "version": "0.1.0-alpha.0",
+  "version": "0.1.0",
   "description": "World2Agent native plugin for OpenClaw",
   "license": "Apache-2.0",
   "author": "MachinePulse Pte. Ltd.",
