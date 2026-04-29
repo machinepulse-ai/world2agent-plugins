@@ -12,22 +12,7 @@ When [`deliver`](#pushing-replies-to-a-chat-platform-lark--whatsapp--telegram--)
 
 > ⚠️ OpenClaw config is **JSON**, not YAML. All steps below assume `~/.openclaw/openclaw.json`.
 
-### 1. Set the contextInjection prerequisite
-
-The plugin refuses to start unless `agents.defaults.contextInjection` is exactly `"continuation-skip"` (otherwise OpenClaw's default `"always"` re-injects bootstrap on every signal and silently turns sensors into a token sink).
-
-```bash
-# Edit in place (no `sponge` dependency — works on stock macOS / Linux)
-jq '.agents.defaults.contextInjection = "continuation-skip"' \
-  ~/.openclaw/openclaw.json > /tmp/openclaw.json.tmp && \
-  mv /tmp/openclaw.json.tmp ~/.openclaw/openclaw.json
-
-# Verify
-jq '.agents.defaults.contextInjection' ~/.openclaw/openclaw.json
-# → "continuation-skip"
-```
-
-### 2. Install the plugin
+### 1. Install the plugin
 
 > ⚠️ The plugin uses `child_process` for sensor subprocess management (required for `isolated: true` mode and for npm install/uninstall of sensor packages). OpenClaw's built-in security scan **blocks** plugins with `child_process` by default. The output will show a wall of `WARNING` lines listing every `child_process` site — **that is expected**. The actual success markers are at the bottom: `Linked plugin path` (or `Installed plugin`) and `Restart the gateway to load plugins`.
 
@@ -65,7 +50,7 @@ openclaw world2agent --help
 # → Commands: reload, sensor
 ```
 
-### 3. Subscribe to your first source — by talking to OpenClaw
+### 2. Subscribe to your first source — by talking to OpenClaw
 
 > ℹ️ By default W2A signals lane through your **existing `main` agent** but on a different sessionKey (one per sensor), so they don't pollute your normal chat session. If you'd rather route them to a dedicated agent for full isolation, set `defaultAgentId: "world2agent"` (or any other id) in this plugin's config and `openclaw agents add <id>` first.
 
@@ -232,19 +217,13 @@ an enabled plugin.
 > stays in the session lane only. In-process sensors (the default) push
 > to the channel correctly.
 
-## ContextInjection Prerequisite
-
-This plugin refuses to start unless `agents.defaults.contextInjection` is exactly `"continuation-skip"`.
-
-That check also runs before `openclaw world2agent sensor add`. There is no warning mode, no fallback mode, and no override flag. The design requires a hard failure because OpenClaw's default `"always"` setting would re-inject bootstrap on every sensor signal and silently turn high-frequency sensors into a token sink.
-
 ## Relation to `hermes-sensor-bridge`
 
 `hermes-sensor-bridge` solved the same World2Agent runtime problem for Hermes with webhook subscriptions plus supervised subprocesses. This package keeps the same manifest shape and reuses the runner/supervisor mechanics for `isolated: true`, but the primary OpenClaw path is simpler: native plugin registration plus `runtime.subagent.run` (which internally pairs `runEmbeddedAgent` with OpenClaw's outbound delivery resolver) — no separate gateway, no HMAC ingest, no platform bootstrap.
 
 ## Troubleshooting
 
-**Plugin install blocked by safety scanner**: that's the security warning about `child_process`. Use `--dangerously-force-unsafe-install` (see [§ Install the plugin](#2-install-the-plugin)).
+**Plugin install blocked by safety scanner**: that's the security warning about `child_process`. Use `--dangerously-force-unsafe-install` (see [§ Install the plugin](#1-install-the-plugin)).
 
 **`openclaw world2agent --help` says "unknown command"**: gateway hasn't reloaded the plugin yet. Run `openclaw gateway restart`.
 

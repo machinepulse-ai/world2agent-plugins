@@ -8,7 +8,7 @@ Channel adapters that connect [World2Agent](https://github.com/machinepulse-ai/w
 | --- | --- | --- |
 | [`claude-code-channel`](./claude-code-channel) | [Claude Code](https://docs.claude.com/en/docs/claude-code) | MCP channel adapter + Claude Code plugin bundle. Signals arrive as in-session MCP notifications. |
 | [`hermes-sensor-bridge`](./hermes-sensor-bridge) | [Hermes Agent](https://hermes-agent.nousresearch.com/) | Out-of-process supervisor + webhook bridge. Each signal triggers a fresh `AIAgent.run_conversation()` with the generated handler skill auto-loaded. |
-| [`openclaw-plugin`](./openclaw-plugin) | [OpenClaw](https://docs.openclaw.ai/) | Native OpenClaw plugin. Conversational install via chat (Q&A driven by the sensor's `SETUP.md`), in-process polling, dispatch via `runEmbeddedAgent` into a per-sensor session lane keyed `agent:main:w2a-<sensor>` (main chat untouched). |
+| [`openclaw-plugin`](./openclaw-plugin) | [OpenClaw](https://docs.openclaw.ai/) | Native OpenClaw plugin. Conversational install via chat (Q&A driven by the sensor's `SETUP.md`), in-process polling, dispatch via OpenClaw's embedded-agent runtime into a per-sensor session lane keyed `agent:main:w2a-<sensor>` (main chat untouched). |
 
 ---
 
@@ -54,14 +54,6 @@ Each signal triggers a fresh agent run against the generated handler skill. See 
 
 ## Quick start — OpenClaw
 
-Prereq — the plugin refuses to start unless `agents.defaults.contextInjection` is exactly `"continuation-skip"` in `~/.openclaw/openclaw.json`. This is hard-fail by design (the default `"always"` re-injects bootstrap on every signal and silently turns sensors into a token sink):
-
-```bash
-jq '.agents.defaults.contextInjection = "continuation-skip"' \
-  ~/.openclaw/openclaw.json > /tmp/openclaw.json.tmp && \
-  mv /tmp/openclaw.json.tmp ~/.openclaw/openclaw.json
-```
-
 Install the plugin (`--dangerously-force-unsafe-install` is required because the plugin uses `child_process` to npm-install sensor packages on demand — OpenClaw's security scan blocks it otherwise):
 
 ```bash
@@ -75,9 +67,9 @@ Then in a chat session with your `main` agent, just describe what you want to su
 > subscribe me to Hacker News — I care about AI and security stories
 ```
 
-The bundled `world2agent-manage` skill takes over: reads the sensor's `SETUP.md`, asks you 1–3 questions to personalize the handler, writes both the config and the personalized SKILL.md, and registers the sensor — without any manual CLI work.
+The bundled `world2agent-manage` skill takes over: reads the sensor's `SETUP.md`, asks you 1–3 questions to personalize the handler, writes both the config and the personalized SKILL.md, registers the sensor, and reloads the running plugin — without any manual CLI work.
 
-> First time only: the agent will ask **you** to run `openclaw gateway restart` once after registration. It intentionally doesn't run that command itself — restarting the gateway from inside the chat would kill the gateway process and truncate the agent's reply mid-sentence. After the restart, the sensor starts polling within ~60 seconds.
+> If reload returns `ok: false` (for example a gateway-call timeout), the agent will ask **you** to run `openclaw gateway restart` in your own terminal. It intentionally doesn't run that command itself — restarting the gateway from inside the chat would kill the gateway process and truncate the agent's reply mid-sentence. After reload or restart, the sensor starts polling within seconds; subsequent polls follow the sensor's configured `interval_seconds`.
 
 Signals route to a per-sensor session lane (`agent:main:w2a-<sensor>`) — your `main` chat is untouched. Open the `w2a-<sensor>` lane in the OpenClaw dashboard (<http://127.0.0.1:18789/>) to see how the agent reacts to each signal. See [`openclaw-plugin/README.md`](./openclaw-plugin/README.md) for the full install reference, dispatcher internals, and CLI fallback.
 
