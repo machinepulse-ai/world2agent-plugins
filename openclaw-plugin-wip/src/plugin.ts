@@ -1,6 +1,5 @@
 import { EmbeddedDispatcher, HttpDispatcher } from "./dispatch.js";
 import {
-  assertContextInjectionCompatible,
   loadEffectiveOpenClawConfig,
   normalizePluginConfig,
 } from "./config.js";
@@ -48,7 +47,6 @@ export function createWorld2AgentPlugin() {
       }
 
       const openclawConfig = api.config ?? {};
-      assertContextInjectionCompatible(openclawConfig);
       const openclawConfigRef = { current: openclawConfig };
 
       // If a previous register() left a runtime running in this same
@@ -96,7 +94,6 @@ export function createWorld2AgentPlugin() {
 
       api.registerGatewayMethod?.("world2agent.reload", async () => {
         const nextConfig = await loadEffectiveOpenClawConfig(api);
-        assertContextInjectionCompatible(nextConfig);
         openclawConfigRef.current = nextConfig;
         const manifest = await readManifest(paths);
         return {

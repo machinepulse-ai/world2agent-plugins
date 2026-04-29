@@ -27,7 +27,7 @@ Verify it loaded:
 
 ```bash
 openclaw plugins list | grep world2agent
-# → │ World2Agent │ world2agent │ openclaw │ enabled │ ... │ 0.1.0-alpha.0 │
+# → │ World2Agent │ world2agent │ openclaw │ enabled │ ... │ 0.1.0 │
 openclaw world2agent --help
 # → Commands: reload, sensor
 ```

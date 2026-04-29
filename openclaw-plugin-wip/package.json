@@ -1,6 +1,6 @@
 {
   "name": "@world2agent/openclaw-plugin",
-  "version": "0.1.0-alpha.0",
+  "version": "0.1.0",
   "description": "World2Agent native plugin for OpenClaw",
   "license": "Apache-2.0",
   "author": "MachinePulse Pte. Ltd.",
@@ -8,7 +8,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/machinepulse-ai/world2agent-plugins.git",
-    "directory": "openclaw-plugin"
+    "directory": "openclaw-plugin-wip"
   },
   "bugs": {
     "url": "https://github.com/machinepulse-ai/world2agent-plugins/issues"

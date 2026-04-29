@@ -1,7 +1,6 @@
 import { join } from "node:path";
 import { packageToSkillId } from "@world2agent/sdk";
 import {
-  assertContextInjectionCompatible,
   loadEffectiveOpenClawConfig,
   normalizeDeliver,
   upsertDedicatedAgentSkillAllowlist,
@@ -117,7 +116,6 @@ async function runAddCommand(
   options: Record<string, unknown>,
 ): Promise<unknown> {
   const config = await loadEffectiveOpenClawConfig(services.api);
-  assertContextInjectionCompatible(config);
 
   const installed = await ensurePackageInstalled(pkg);
   const sensorId = optionString(options, "sensorId") ?? defaultSensorId(pkg);
@@ -290,4 +288,3 @@ function optionString(options: Record<string, unknown>, key: string): string | u
 function optionBoolean(options: Record<string, unknown>, key: string): boolean {
   return options[key] === true;
 }
-

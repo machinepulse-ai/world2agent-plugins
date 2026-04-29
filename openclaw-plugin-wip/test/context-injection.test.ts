@@ -13,13 +13,13 @@ describe("contextInjection startup check", () => {
     process.env.OPENCLAW_HOME = ORIGINAL_OPENCLAW_HOME;
   });
 
-  it("fails register() synchronously when agents.defaults.contextInjection is not continuation-skip", async () => {
+  it("does not fail register() when agents.defaults.contextInjection is always", async () => {
     const root = await mkdtemp(join(tmpdir(), "w2a-openclaw-register-"));
     process.env.W2A_HOME = join(root, "w2a");
     process.env.OPENCLAW_HOME = join(root, "openclaw");
 
     const plugin = createWorld2AgentPlugin();
-    expect(() =>
+    expect(() => {
       plugin.register({
         config: {
           agents: {
@@ -29,10 +29,8 @@ describe("contextInjection startup check", () => {
           },
         },
         pluginConfig: {},
-      }),
-    ).toThrow(
-      "OpenClaw config field `agents.defaults.contextInjection` must be set to \"continuation-skip\"",
-    );
+      });
+    }).not.toThrow();
   });
 
   it("register() returns synchronously (not a promise) — OpenClaw drops async registers", async () => {
@@ -49,4 +47,3 @@ describe("contextInjection startup check", () => {
     expect(result).toBeUndefined();
   });
 });
-
