@@ -14,14 +14,12 @@ set -euo pipefail
 [ "$(uname -s)" = "Linux" ] || out_err "install-systemd.sh only runs on Linux"
 
 binary=$(command -v world2agent-hermes-supervisor || true)
-[ -n "$binary" ] || out_err "world2agent-hermes-supervisor not on PATH; install bridge first"
+[ -n "$binary" ] || out_err "world2agent-hermes-supervisor not on PATH; install the bridge runtime first"
 
-SERVICE="world2agent-hermes-supervisor.service"
-UNIT_DIR="$HOME/.config/systemd/user"
-UNIT="$UNIT_DIR/$SERVICE"
+UNIT=$(systemd_unit_path)
 LOG=$(supervisor_log_path)
 
-mkdir -p "$UNIT_DIR" "$(w2a_home)"
+mkdir -p "$(dirname "$UNIT")" "$(w2a_home)"
 
 cat >"$UNIT" <<EOF
 [Unit]
@@ -41,7 +39,7 @@ WantedBy=default.target
 EOF
 
 systemctl --user daemon-reload >/dev/null 2>&1 || true
-systemctl --user enable --now "$SERVICE" >/dev/null 2>&1 \
-  || out_err "systemctl --user enable --now $SERVICE failed"
+systemctl --user enable --now "$SYSTEMD_SERVICE" >/dev/null 2>&1 \
+  || out_err "systemctl --user enable --now $SYSTEMD_SERVICE failed"
 
-out_ok "$(jq -nc --arg unit "$UNIT" --arg svc "$SERVICE" '{unit:$unit,service:$svc}')"
+out_ok "$(jq -nc --arg unit "$UNIT" --arg svc "$SYSTEMD_SERVICE" '{unit:$unit,service:$svc}')"

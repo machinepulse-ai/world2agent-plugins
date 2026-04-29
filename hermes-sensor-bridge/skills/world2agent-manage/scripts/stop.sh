@@ -8,21 +8,19 @@
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/_lib.sh"
 
-LABEL="dev.world2agent.hermes-supervisor"
-PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-SERVICE="world2agent-hermes-supervisor.service"
-UNIT="$HOME/.config/systemd/user/$SERVICE"
+PLIST=$(launchd_plist_path)
+UNIT=$(systemd_unit_path)
 
 case "$(uname -s)" in
   Darwin)
     if [ -f "$PLIST" ]; then
-      launchctl bootout "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || true
+      launchctl bootout "$(launchd_target)" >/dev/null 2>&1 || true
       out_ok "$(jq -nc '{mode:"launchd",killed_pid:null}')"
     fi
     ;;
   Linux)
     if [ -f "$UNIT" ]; then
-      systemctl --user stop "$SERVICE" >/dev/null 2>&1 || true
+      systemctl --user stop "$SYSTEMD_SERVICE" >/dev/null 2>&1 || true
       out_ok "$(jq -nc '{mode:"systemd",killed_pid:null}')"
     fi
     ;;

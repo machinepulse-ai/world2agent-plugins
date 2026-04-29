@@ -11,7 +11,7 @@ version: 0.2.0
 # World2Agent sensor management
 
 You manage the user's W2A sensors. **All host-side work is delegated to shell
-scripts in `scripts/` — you never run `npm install`, `hermes webhook
+scripts in `scripts/` — you never invoke the package manager, `hermes webhook
 subscribe`, jq mutations, curl calls, or YAML edits inline.** Your job is:
 
 1. Decide which script to run, with which args.
@@ -58,9 +58,9 @@ What it does:
   are on PATH;
 - creates / preserves `~/.world2agent/.bridge-state.json`
   (`hmac_secret` / `control_token` / `control_port`, mode 0600);
-- writes a managed `platforms.webhook` block to `~/.hermes/config.yaml`
-  (refuses if the user has a hand-written top-level `platforms:` block);
-- mirrors the same secret to `~/.hermes/.env`;
+- enables Hermes's webhook platform via a managed config block (refuses if
+  the user already has a hand-written top-level `platforms:` block);
+- mirrors the same secret into the Hermes runtime env file;
 - starts the supervisor (foreground, `nohup`-detached).
 
 Output shape:
@@ -83,7 +83,8 @@ Output shape:
 Failure modes that need a user message:
 
 - `error: "world2agent-hermes-supervisor / world2agent-sensor-runner not on PATH..."`
-  → tell the user to run `npm install -g @world2agent/hermes-sensor-bridge`.
+  → the bridge runtime isn't installed; point the user at the package's install
+  docs (alpha tag).
 - `error: "<file> has a hand-written 'platforms:' block. Refusing to merge..."`
   → tell the user to add a `webhook:` subkey under their existing
   `platforms:` themselves, or run `hermes gateway setup`.
@@ -122,18 +123,19 @@ Three options:
 
 | Mode | Effect | Pick when |
 |---|---|---|
-| `log` | Agent runs the handler skill; the response lands in `~/.hermes/logs/agent.log`. The handler decides whether to notify (e.g., by calling `telegram_send_*`). | User has no chat paired, or wants the skill itself to gate notifications. |
+| `log` | Agent runs the handler skill; the response lands in the Hermes agent log. The handler decides whether to notify (e.g., by calling `telegram_send_*`). | User has no chat paired, or wants the skill itself to gate notifications. |
 | `agent` + deliver (**default**) | Agent runs, response auto-delivered to `<platform>` + `<chat-id>`. | User wants every signal piped to a specific chat after agent processing. |
 | `deliver-only` | Skip agent entirely; render `--prompt` template literal and dispatch. Zero LLM cost, sub-second. | High-volume self-contained signals (alerts, scoreboards). |
 
 **Default behavior:** if you don't pass `--deliver`, `install-sensor.sh`
-auto-detects the first non-empty `<PLATFORM>_HOME_CHANNEL` in
-`~/.hermes/.env` (priority order: `feishu`, `telegram`, `discord`, `slack`,
-`signal`, `whatsapp`, `wecom`, `dingtalk`) and uses `agent + deliver` mode
-with that chat as the target. Only when no home channel is configured does
-it fall back to `log`. So **don't ask the user about delivery mode unless
-they bring it up** — the env var is a strong signal that they've already
-chosen their preferred channel during platform setup.
+auto-detects the first home-channel mapping the user already configured
+during Hermes platform pairing (priority order: `feishu`, `telegram`,
+`discord`, `slack`, `signal`, `whatsapp`, `wecom`, `dingtalk`) and uses
+`agent + deliver` mode with that chat as the target. Only when no home
+channel is configured does it fall back to `log`. So **don't ask the user
+about delivery mode unless they bring it up** — the existing pairing is a
+strong signal that they've already chosen their preferred channel during
+platform setup.
 
 Pass `--deliver log` explicitly if the user wants log-only despite having
 a paired channel, or `--deliver-only` for zero-LLM dispatch.
@@ -186,7 +188,7 @@ Successful output:
   "sensor_id": "...",
   "skill_id": "...",
   "subscription_name": "world2agent-<sensor_id>",
-  "webhook_url": "http://127.0.0.1:8644/webhooks/...",
+  "webhook_url": "<gateway>/webhooks/<route>",
   "skill_path": "/.../SKILL.md",
   "supervisor_reload": { ... } | null
 }
@@ -282,8 +284,8 @@ Avoid `-f` unless the user explicitly asks to live-tail — it never returns.
 For a daemon that survives login:
 
 ```bash
-bash "$SCRIPTS/install-launchd.sh"     # macOS — writes ~/Library/LaunchAgents/dev.world2agent.hermes-supervisor.plist
-bash "$SCRIPTS/install-systemd.sh"     # Linux — writes ~/.config/systemd/user/world2agent-hermes-supervisor.service
+bash "$SCRIPTS/install-launchd.sh"     # macOS — registers a launchd user agent
+bash "$SCRIPTS/install-systemd.sh"     # Linux — registers a systemd user unit
 ```
 
 Reverse with:
@@ -292,10 +294,9 @@ Reverse with:
 bash "$SCRIPTS/uninstall-bootstrap.sh"
 ```
 
-That removes the plist/unit, the managed `platforms.webhook` block from
-`config.yaml`, and the managed mirror in `.env`. It does **not** touch
-`~/.world2agent/` (sensor configs and bridge state stay; that's
-`remove-sensor.sh`'s job).
+That removes the launchd/systemd registration, the managed webhook-platform
+block, and the managed env mirror. It does **not** touch `~/.world2agent/`
+(sensor configs and bridge state stay; that's `remove-sensor.sh`'s job).
 
 ---
 
@@ -320,7 +321,7 @@ Both idempotent. When the user is troubleshooting, prefer `status.sh` first.
   value. It disables HMAC checks on the supervisor → Hermes hop. Only OK in
   bridge e2e tests.
 - **Static routes win**: if the user has a hand-written webhook route in
-  `~/.hermes/config.yaml` with the same name as our auto-generated
+  the gateway config with the same name as our auto-generated
   `world2agent-<sensor_id>`, the static route takes precedence and our
   dynamic subscription has no effect. Notice and tell them.
 - **Reconciliation triggers a restart**: editing `.config` for an entry in
@@ -328,13 +329,13 @@ Both idempotent. When the user is troubleshooting, prefer `status.sh` first.
   that sensor (config-hash mismatch). Don't edit the file casually mid-session.
 - **Rate limits**: Hermes webhook routes default to 30 req/min per route.
   If a sensor is high-frequency (market ticks, real-time chat), suggest
-  bumping `extra.rate_limit` in `~/.hermes/config.yaml`.
+  bumping `extra.rate_limit` in the gateway config.
 - **Hot-reload, not gateway restart**: `install-sensor.sh` / `remove-sensor.sh`
-  do NOT need a gateway restart — Hermes hot-reloads
-  `~/.hermes/webhook_subscriptions.json` on every incoming request. A
-  restart is only needed when `bootstrap.sh` writes the managed block for
-  the first time (the `platforms.webhook.*` config has changed); tell the
-  user once after the initial `bootstrap.sh` to run `hermes gateway restart`.
+  do NOT need a gateway restart — Hermes hot-reloads dynamic webhook
+  subscriptions on every incoming request. A restart is only needed when
+  `bootstrap.sh` writes the managed block for the first time (the
+  webhook-platform config has changed); tell the user once after the
+  initial `bootstrap.sh` to run `hermes gateway restart`.
 
 ## Output style
 

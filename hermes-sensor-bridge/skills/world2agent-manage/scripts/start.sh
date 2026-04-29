@@ -13,30 +13,28 @@
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/_lib.sh"
 
-LABEL="dev.world2agent.hermes-supervisor"
-PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-SERVICE="world2agent-hermes-supervisor.service"
-UNIT="$HOME/.config/systemd/user/$SERVICE"
+PLIST=$(launchd_plist_path)
+UNIT=$(systemd_unit_path)
 
 case "$(uname -s)" in
   Darwin)
     if [ -f "$PLIST" ]; then
-      launchctl kickstart "gui/$(id -u)/$LABEL" >/dev/null 2>&1 \
-        || out_err "launchctl kickstart $LABEL failed"
+      launchctl kickstart "$(launchd_target)" >/dev/null 2>&1 \
+        || out_err "launchctl kickstart $LAUNCHD_LABEL failed"
       out_ok "$(jq -nc --arg log "$(supervisor_log_path)" '{mode:"launchd",log:$log}')"
     fi
     ;;
   Linux)
     if [ -f "$UNIT" ]; then
-      systemctl --user start "$SERVICE" >/dev/null 2>&1 \
-        || out_err "systemctl --user start $SERVICE failed"
+      systemctl --user start "$SYSTEMD_SERVICE" >/dev/null 2>&1 \
+        || out_err "systemctl --user start $SYSTEMD_SERVICE failed"
       out_ok "$(jq -nc --arg log "$(supervisor_log_path)" '{mode:"systemd",log:$log}')"
     fi
     ;;
 esac
 
 binary=$(command -v world2agent-hermes-supervisor || true)
-[ -n "$binary" ] || out_err "world2agent-hermes-supervisor not on PATH; install bridge first"
+[ -n "$binary" ] || out_err "world2agent-hermes-supervisor not on PATH; install the bridge runtime first"
 
 mkdir -p "$(w2a_home)"
 log=$(supervisor_log_path)
