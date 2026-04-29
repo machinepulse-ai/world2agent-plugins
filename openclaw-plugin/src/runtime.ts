@@ -18,6 +18,14 @@ export class SensorRuntime {
   private readonly paths: World2AgentPaths;
   private readonly log: (line: string) => void;
   private readonly handles = new Map<string, RuntimeHandle>();
+  // Serialize applyManifest calls. Without this, two concurrent invocations
+  // (e.g. plugin startup race with `world2agent.reload`, or two reloads in
+  // quick succession) can both observe an empty handle map, both call
+  // `startHandle`, and orphan one of the resulting in-process sensor
+  // instances — the orphan keeps a private `setInterval` poll loop and a
+  // private `FileSensorStore` mirror, defeating dedup and creating an emit
+  // storm. Same pattern as hermes-sensor-bridge's supervisor.
+  private applyLock: Promise<unknown> = Promise.resolve();
 
   constructor(options: SensorRuntimeOptions) {
     this.dispatcher = options.dispatcher;
@@ -27,6 +35,27 @@ export class SensorRuntime {
   }
 
   async applyManifest(entries: SensorEntry[]): Promise<ApplyResult> {
+    const callId = Math.random().toString(36).slice(2, 8);
+    let release!: () => void;
+    const previous = this.applyLock;
+    this.applyLock = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.log(`[w2a/lock] ${callId} queued (handles=${[...this.handles.keys()].join(",") || "none"})`);
+    await previous.catch(() => undefined);
+    this.log(`[w2a/lock] ${callId} acquired (handles=${[...this.handles.keys()].join(",") || "none"})`);
+    try {
+      const result = await this.applyManifestUnlocked(entries);
+      this.log(
+        `[w2a/lock] ${callId} done started=${result.started.length} restarted=${result.restarted.length} stopped=${result.stopped.length} failed=${result.failed.length} (handles=${[...this.handles.keys()].join(",") || "none"})`,
+      );
+      return result;
+    } finally {
+      release();
+    }
+  }
+
+  private async applyManifestUnlocked(entries: SensorEntry[]): Promise<ApplyResult> {
     const desired = entries.filter((entry) => entry.enabled !== false);
     const result: ApplyResult = {
       started: [],

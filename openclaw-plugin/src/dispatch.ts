@@ -17,22 +17,16 @@ import type {
   HttpIngestEnvelope,
 } from "./types.js";
 
-const RUN_EMBEDDED_AGENT_ERROR =
-  "OpenClaw runtime is missing api.runtime.agent.runEmbeddedAgent. Verify the " +
-  "plugin is running inside a live OpenClaw gateway.";
-
-export function assertEmbeddedAgentRuntime(options: EmbeddedDispatcherOptions): void {
-  if (typeof options.api.runtime?.agent?.runEmbeddedAgent !== "function") {
-    throw new Error(RUN_EMBEDDED_AGENT_ERROR);
-  }
-}
-
 export class EmbeddedDispatcher implements Dispatcher {
   private readonly options: EmbeddedDispatcherOptions;
   private readonly queues = new Map<string, Promise<unknown>>();
 
   constructor(options: EmbeddedDispatcherOptions) {
-    assertEmbeddedAgentRuntime(options);
+    // Don't validate runtime APIs at construction time — either
+    // runtime.subagent.run (preferred when deliver is configured) OR
+    // runtime.agent.runEmbeddedAgent (fallback) is enough. The actual
+    // check happens per-dispatch in `dispatchNow` because it depends on
+    // whether the caller asked for delivery.
     this.options = options;
   }
 

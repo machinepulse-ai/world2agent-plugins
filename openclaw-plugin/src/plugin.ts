@@ -16,6 +16,16 @@ import { IsolatedRunnerManager } from "./isolated.js";
 import { SensorRuntime } from "./runtime.js";
 import { getWorld2AgentPaths } from "./paths.js";
 
+// Module-level state. OpenClaw can call register() multiple times within
+// a single gateway process (e.g. config-driven plugin reload, or some
+// startup sequences that load the plugin twice). Without this state, each
+// register() would create a fresh SensorRuntime + start a fresh sensor,
+// leaving the previous SensorRuntime's sensor running as an orphan. The
+// orphan keeps its own setInterval poll loop and FileSensorStore mirror,
+// causing duplicate emits and dedup chaos. Storing state at module scope
+// lets a re-register stop the previous runtime before creating a new one.
+let activeRuntime: SensorRuntime | null = null;
+
 // register() MUST stay synchronous: OpenClaw's plugin loader logs
 // "plugin register returned a promise; async registration is ignored"
 // and drops every api.register* call that follows an await.
@@ -40,6 +50,19 @@ export function createWorld2AgentPlugin() {
       const openclawConfig = api.config ?? {};
       assertContextInjectionCompatible(openclawConfig);
       const openclawConfigRef = { current: openclawConfig };
+
+      // If a previous register() left a runtime running in this same
+      // process, stop its sensors before swapping in the new one. Fire and
+      // forget — register() must stay sync — but the stopAll runs to
+      // completion in the background and the old SensorRuntime is then
+      // garbage-collected once nothing references it.
+      const previousRuntime = activeRuntime;
+      if (previousRuntime) {
+        log(api, "[w2a] re-register detected; stopping previous runtime's sensors");
+        void previousRuntime.stopAll().catch((err) => {
+          log(api, `[w2a] previous runtime stopAll failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }
 
       const embeddedDispatcher = new EmbeddedDispatcher({
         api,
@@ -69,6 +92,7 @@ export function createWorld2AgentPlugin() {
         paths,
         log: (line) => log(api, line),
       });
+      activeRuntime = runtime;
 
       api.registerGatewayMethod?.("world2agent.reload", async () => {
         const nextConfig = await loadEffectiveOpenClawConfig(api);
