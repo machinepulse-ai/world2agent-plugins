@@ -8,7 +8,6 @@ Channel adapters that connect [World2Agent](https://github.com/machinepulse-ai/w
 | --- | --- | --- |
 | [`claude-code-channel`](./claude-code-channel) | [Claude Code](https://docs.claude.com/en/docs/claude-code) | MCP channel adapter + Claude Code plugin bundle. Signals arrive as in-session MCP notifications. |
 | [`hermes-sensor-bridge`](./hermes-sensor-bridge) | [Hermes Agent](https://hermes-agent.nousresearch.com/) | Out-of-process supervisor + webhook bridge. Each signal triggers a fresh `AIAgent.run_conversation()` with the generated handler skill auto-loaded. |
-| [`openclaw-plugin (wip)`](./openclaw-plugin) | [OpenClaw](https://docs.openclaw.ai/) | Work in progress. |
 
 ---
 
@@ -64,7 +63,7 @@ Each signal triggers a fresh agent run against the generated handler skill. See 
 │   ├── skills/                 # MCP-side handler skills
 │   ├── src/
 │   └── package.json
-├── hermes-sensor-bridge/       # @world2agent/hermes-sensor-bridge
+└── hermes-sensor-bridge/       # @world2agent/hermes-sensor-bridge
 │   ├── src/
 │   │   ├── runner/             # per-sensor subprocess
 │   │   └── supervisor/         # daemon (signal → HMAC → POST → Hermes)
@@ -73,7 +72,6 @@ Each signal triggers a fresh agent run against the generated handler skill. See 
 │   │   └── scripts/            # all host-side work (install, remove, list, …)
 │   ├── e2e/
 │   └── package.json
-└── openclaw-plugin/            # @world2agent/openclaw-plugin (wip)
 ```
 
 ---

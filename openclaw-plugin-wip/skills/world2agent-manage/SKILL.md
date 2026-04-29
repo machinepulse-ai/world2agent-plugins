@@ -78,7 +78,7 @@ and copy mode):
 PLUGIN_DIR=$(openclaw plugins list --json | \
   jq -r '.plugins[] | select(.id == "world2agent") | .rootDir')
 echo "$PLUGIN_DIR"
-# → e.g. /Users/<you>/Documents/.../openclaw-plugin
+# → e.g. /Users/<you>/Documents/.../openclaw-plugin-wip
 ```
 
 Then check whether the sensor package is already installed there:
