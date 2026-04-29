@@ -1,0 +1,68 @@
+{
+  "name": "@world2agent/openclaw-plugin",
+  "version": "0.1.0-alpha.0",
+  "description": "World2Agent native plugin for OpenClaw",
+  "license": "Apache-2.0",
+  "author": "MachinePulse Pte. Ltd.",
+  "homepage": "https://github.com/machinepulse-ai/world2agent",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/machinepulse-ai/world2agent-plugins.git",
+    "directory": "openclaw-plugin"
+  },
+  "bugs": {
+    "url": "https://github.com/machinepulse-ai/world2agent-plugins/issues"
+  },
+  "keywords": [
+    "world2agent",
+    "w2a",
+    "openclaw",
+    "plugin",
+    "sensor"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "pnpm run clean && pnpm run build"
+  },
+  "dependencies": {
+    "@world2agent/sdk": "0.1.0-alpha.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.5"
+  },
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "skills",
+    "README.md"
+  ],
+  "openclaw": {
+    "extensions": [
+      "./src/index.ts"
+    ],
+    "runtimeExtensions": [
+      "./dist/index.js"
+    ]
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
