@@ -22,6 +22,12 @@ export interface OpenClawBridgeSensorConfig {
   notify?: NotifyTarget;
   // Optional model override forwarded to /hooks/agent.
   model?: string;
+  // Optional per-sensor pass-through fields documented by /hooks/agent.
+  // None of these are required; omitting them lets the OpenClaw gateway
+  // apply its own defaults.
+  thinking?: string;
+  timeout_seconds?: number;
+  fallbacks?: string[];
 }
 
 export interface SharedSensorEntry {
@@ -386,6 +392,24 @@ function normalizeOpenClawBridgeConfig(
 
   const notify = normalizeNotify(raw.notify);
   if (notify) normalized.notify = notify;
+
+  const thinking = optionalNonEmptyString(raw.thinking);
+  if (thinking) normalized.thinking = thinking;
+
+  if (
+    typeof raw.timeout_seconds === "number" &&
+    Number.isFinite(raw.timeout_seconds) &&
+    raw.timeout_seconds > 0
+  ) {
+    normalized.timeout_seconds = Math.floor(raw.timeout_seconds);
+  }
+
+  if (Array.isArray(raw.fallbacks)) {
+    const fallbacks = raw.fallbacks.filter(
+      (item): item is string => typeof item === "string" && item.trim() !== "",
+    );
+    if (fallbacks.length > 0) normalized.fallbacks = fallbacks;
+  }
 
   return normalized;
 }

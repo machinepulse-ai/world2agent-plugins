@@ -54,16 +54,19 @@ idempotent; second runs just confirm existing state.
 bash "$SCRIPTS/bootstrap.sh"
 ```
 
-What it does:
+What it does (each step is a no-op when already done):
 
-- verifies `world2agent-openclaw-supervisor` and `world2agent-sensor-runner`
-  are on PATH;
+- ensures `world2agent-openclaw-supervisor` and `world2agent-openclaw-runner`
+  are on PATH; **auto-installs `@world2agent/openclaw-sensor-bridge`
+  globally via `npm install -g`** if either binary is missing;
 - creates / preserves `~/.world2agent/.openclaw-bridge-state.json`
   (`control_token` / `control_port`, mode 0600);
-- verifies OpenClaw's hooks subsystem is ready: `hooks.enabled=true`,
-  `hooks.token` set, `hooks.allowRequestSessionKey=true`, and at least one
-  prefix in `hooks.allowedSessionKeyPrefixes` (read-only — never modifies
-  `~/.openclaw/openclaw.json`);
+- ensures the OpenClaw hooks block is ready by mutating
+  `~/.openclaw/openclaw.json` only when needed: sets `hooks.enabled=true`,
+  generates `hooks.token` if absent (existing tokens are preserved),
+  sets `hooks.allowRequestSessionKey=true`, and adds `"w2a:"` to
+  `hooks.allowedSessionKeyPrefixes`. A timestamped backup of the file is
+  written next to it before any mutation;
 - starts the supervisor (foreground, `nohup`-detached).
 
 Output shape:
@@ -72,25 +75,38 @@ Output shape:
 {
   "ok": true,
   "steps": {
-    "binary": "present",
+    "binary": "present" | "installed",
     "state": "created" | "present",
-    "openclaw_hooks": "ready",
+    "openclaw_hooks": "ready" | "wrote-managed-fields",
     "supervisor": "started" | "already-running" | "started-but-not-yet-healthy" | "start-failed"
   },
   "openclaw_home": "/Users/.../.openclaw",
   "control_port": 8646,
-  "session_key_prefix": "w2a:" | "hook:" | <first allowed>
+  "session_key_prefix": "w2a:" | "hook:" | <first allowed>,
+  "gateway_restart_needed": true | false,
+  "openclaw_config_backup": "/Users/.../.openclaw/openclaw.json.w2a-backup-..." | null
 }
 ```
 
+When `gateway_restart_needed` is `true`, **stop and tell the user to run
+`openclaw gateway restart` before installing any sensors** — we just wrote
+fields into their gateway config and the running gateway hasn't picked
+them up yet, so `/hooks/agent` will reject our POSTs with 4xx until the
+restart. Mention the backup path so they know how to roll back.
+
 Failure modes that need a user message:
 
-- `error: "world2agent-openclaw-supervisor / world2agent-sensor-runner not on PATH..."`
-  → bridge runtime not installed. Tell the user to
-  `npm install -g @world2agent/openclaw-sensor-bridge`.
-- `error: "OpenClaw hooks not ready: ..."`
-  → quote the reason. The user must edit `~/.openclaw/openclaw.json` to
-  enable hooks. Show them the minimal block:
+- `error: "auto-install of @world2agent/openclaw-sensor-bridge failed..."`
+  → npm install failed (commonly EACCES on system Node). Suggest the user
+  re-run with `sudo npm install -g @world2agent/openclaw-sensor-bridge`,
+  then re-invoke bootstrap.
+- `error: "bridge binaries still not on PATH after install..."`
+  → npm's global bin dir isn't on PATH. Have the user check
+  `npm bin -g` and add it to their shell profile.
+- `error: "could not configure OpenClaw hooks: ..."`
+  → quote the reason. The auto-mutation refused (e.g. file isn't valid
+  JSON). The user must edit `~/.openclaw/openclaw.json` themselves to
+  ensure this block exists, then restart the gateway:
 
   ```json
   "hooks": {
@@ -100,8 +116,6 @@ Failure modes that need a user message:
     "allowedSessionKeyPrefixes": ["w2a:"]
   }
   ```
-
-  Then `openclaw gateway restart`.
 
 ---
 
@@ -137,13 +151,20 @@ reply to a real channel. Three options:
 
 | Mode | Effect | Pick when |
 |---|---|---|
-| dashboard-only (default) | Agent runs, reply persists to the W2A session lane (`agent:main:<sessionKey>`). User must check the dashboard / `openclaw sessions` to see it. | User is just trying it out, or wants the handler skill to gate notifications by emitting `imsg`/`feishu`/etc. tool calls itself. |
-| `--notify-channel <ch> --notify-to <handle>` | Agent runs, reply auto-delivered to channel/handle via OpenClaw's outbound layer. | User wants every signal-driven reply pushed to a real chat (iMessage, Feishu, Slack, …). |
-| (none — handler skill emits its own send) | Agent runs, handler decides if/where to send. | High-traffic sensors where most signals should be silent. |
+| auto-push to paired channel (**default**) | Agent runs, reply auto-delivered via OpenClaw's outbound layer. `install-sensor.sh` auto-detects the first `<PLATFORM>_HOME_CHANNEL=<handle>` entry in `~/.openclaw/.env` (priority: feishu, imessage, telegram, slack, discord, signal, whatsapp, wecom, dingtalk) and uses that as the target. | User has already paired a chat platform with OpenClaw — the env var is the user's signal that "this is my preferred inbox." |
+| dashboard-only | Agent runs, reply persists to the W2A session lane only. User has to open the dashboard / `openclaw sessions` to see it. | No paired channel, or user explicitly wants the handler skill to gate notifications via `imsg`/`feishu`/etc. tool calls of its own. |
+| explicit `--notify-channel <ch> --notify-to <handle>` | Same as auto-push but the user picks the channel/handle. | User has multiple paired channels and wants this sensor on a non-default one. |
 
-If the user already has paired channels (Feishu, iMessage, etc.) and wants
-push, ask them which one and the handle (phone number, chat id, etc.).
-Otherwise default to dashboard-only.
+**Default behavior:** if the user doesn't bring delivery up,
+`install-sensor.sh` auto-fills `--notify-channel` / `--notify-to` from the
+home-channel env vars and the agent reply is pushed to that chat. Only
+when no `<PLATFORM>_HOME_CHANNEL` is set does it fall back to
+dashboard-only. So **don't ask the user about delivery unless they raise
+it** — a paired channel is a strong signal they've already chosen their
+preferred inbox.
+
+Pass `--notify-channel`/`--notify-to` explicitly to override, or omit
+both on a host with no paired channels for dashboard-only.
 
 ### Step 4: compose the handler SKILL.md
 
@@ -214,8 +235,16 @@ bash "$SCRIPTS/install-sensor.sh" "<package>" \
   [--agent-id <id>] \
   [--session-key <key>] \
   [--model <id>] \
+  [--thinking <level>] \
+  [--timeout-seconds <n>] \
+  [--fallbacks <model1,model2,...>] \
   [--notify-channel <ch> --notify-to <handle> [--notify-account <id>]]
 ```
+
+`--thinking`, `--timeout-seconds`, and `--fallbacks` map directly to the
+documented `/hooks/agent` request fields and are stored on the manifest's
+`_openclaw_bridge` block. Only set them when the user has a specific
+reason — by default the OpenClaw gateway picks sensible defaults.
 
 Successful output:
 

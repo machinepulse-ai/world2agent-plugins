@@ -12,6 +12,9 @@
 #                              prefix auto-picked from hooks.allowedSessionKeyPrefixes
 #                              (preferring `w2a:` then `hook:`)
 #   [--model <id>]             model override forwarded to /hooks/agent
+#   [--thinking <level>]       /hooks/agent `thinking` field (e.g. low/medium/high)
+#   [--timeout-seconds <n>]    /hooks/agent `timeoutSeconds` field; positive integer
+#   [--fallbacks <a,b,c>]      comma-separated /hooks/agent `fallbacks` model chain
 #   [--notify-channel <ch>]    e.g. imessage / feishu / telegram — paired with --notify-to
 #   [--notify-to <handle>]     channel-specific recipient handle
 #   [--notify-account <id>]    optional account id when host has multiple
@@ -31,6 +34,9 @@ sensor_id_arg=""
 agent_id_arg=""
 session_key_arg=""
 model_arg=""
+thinking_arg=""
+timeout_seconds_arg=""
+fallbacks_arg=""
 notify_channel=""
 notify_to=""
 notify_account=""
@@ -44,6 +50,9 @@ while [ $# -gt 0 ]; do
     --agent-id)          agent_id_arg=$2; shift 2;;
     --session-key)       session_key_arg=$2; shift 2;;
     --model)             model_arg=$2; shift 2;;
+    --thinking)          thinking_arg=$2; shift 2;;
+    --timeout-seconds)   timeout_seconds_arg=$2; shift 2;;
+    --fallbacks)         fallbacks_arg=$2; shift 2;;
     --notify-channel)    notify_channel=$2; shift 2;;
     --notify-to)         notify_to=$2; shift 2;;
     --notify-account)    notify_account=$2; shift 2;;
@@ -55,12 +64,48 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+if [ -n "$timeout_seconds_arg" ]; then
+  [[ "$timeout_seconds_arg" =~ ^[0-9]+$ ]] && [ "$timeout_seconds_arg" -gt 0 ] \
+    || out_err "--timeout-seconds must be a positive integer: $timeout_seconds_arg"
+fi
+
+fallbacks_json='null'
+if [ -n "$fallbacks_arg" ]; then
+  fallbacks_json=$(jq -nc --arg s "$fallbacks_arg" \
+    '$s | split(",") | map(. | gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))') \
+    || out_err "could not parse --fallbacks: $fallbacks_arg"
+  jq -e 'length > 0' <<<"$fallbacks_json" >/dev/null 2>&1 \
+    || out_err "--fallbacks parsed to an empty list: $fallbacks_arg"
+fi
+
 [ -n "$pkg" ] || out_err "usage: install-sensor.sh <package> --config|--config-file ... --skill-md <path> [...]"
 [ -n "$skill_md_path" ] || out_err "--skill-md is required"
 
 if { [ -n "$notify_channel" ] && [ -z "$notify_to" ]; } || \
    { [ -z "$notify_channel" ] && [ -n "$notify_to" ]; }; then
   out_err "--notify-channel and --notify-to must be provided together (use both or neither)"
+fi
+
+# Auto-detect a default delivery target when neither --notify-channel nor
+# --notify-to is supplied. Reads ~/.openclaw/.env for the first
+# <PLATFORM>_HOME_CHANNEL=<handle> entry in priority order — same convention
+# hermes-sensor-bridge uses, so users with paired chat platforms get signals
+# pushed to their actual inbox by default instead of disappearing into a
+# session lane only the dashboard surfaces.
+if [ -z "$notify_channel" ] && [ -z "$notify_to" ]; then
+  env_file="$(openclaw_home)/.env"
+  if [ -f "$env_file" ]; then
+    for plat in feishu imessage telegram slack discord signal whatsapp wecom dingtalk; do
+      var=$(printf '%s_HOME_CHANNEL' "$plat" | tr '[:lower:]' '[:upper:]')
+      home=$(grep -E "^${var}=" "$env_file" 2>/dev/null | head -1 \
+        | sed -E "s/^${var}=//; s/^['\"]//; s/['\"]$//") || home=""
+      if [ -n "$home" ]; then
+        notify_channel=$plat
+        notify_to=$home
+        break
+      fi
+    done
+  fi
 fi
 
 if [ -n "$config_inline" ] && [ -n "$config_file" ]; then
@@ -144,17 +189,28 @@ if [ -n "$notify_channel" ]; then
     '{channel:$ch,to:$to} + (if $ac == "" then {} else {account:$ac} end)')
 fi
 
+timeout_seconds_json='null'
+if [ -n "$timeout_seconds_arg" ]; then
+  timeout_seconds_json=$timeout_seconds_arg
+fi
+
 bridge_block=$(jq -nc \
   --arg sensor_id "$sensor_id" \
   --arg skill_id "$skill_id" \
   --arg agent_id "$agent_id" \
   --arg session_key "$session_key" \
   --arg model "$model_arg" \
+  --arg thinking "$thinking_arg" \
+  --argjson timeout_seconds "$timeout_seconds_json" \
+  --argjson fallbacks "$fallbacks_json" \
   --argjson notify "$notify_block" \
   '{sensor_id:$sensor_id, skill_id:$skill_id}
    + (if $agent_id == "main" then {} else {agent_id:$agent_id} end)
    + {session_key:$session_key}
-   + (if $model == ""  then {} else {model:$model} end)
+   + (if $model == "" then {} else {model:$model} end)
+   + (if $thinking == "" then {} else {thinking:$thinking} end)
+   + (if $timeout_seconds == null then {} else {timeout_seconds:$timeout_seconds} end)
+   + (if $fallbacks == null then {} else {fallbacks:$fallbacks} end)
    + (if $notify == null then {} else {notify:$notify} end)')
 
 cfg_path=$(config_json_path)

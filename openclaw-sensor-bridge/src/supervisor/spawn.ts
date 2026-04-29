@@ -16,6 +16,9 @@ export interface ChildHandle {
   sessionKey: string;
   notify?: NotifyTarget;
   model?: string;
+  thinking?: string;
+  timeoutSeconds?: number;
+  fallbacks?: string[];
   process: ChildProcessWithoutNullStreams;
   startedAt: number;
   restartCount: number;
@@ -133,6 +136,13 @@ export class SensorSupervisor {
       sessionKey,
       ...(entry._openclaw_bridge.notify ? { notify: entry._openclaw_bridge.notify } : {}),
       ...(entry._openclaw_bridge.model ? { model: entry._openclaw_bridge.model } : {}),
+      ...(entry._openclaw_bridge.thinking ? { thinking: entry._openclaw_bridge.thinking } : {}),
+      ...(entry._openclaw_bridge.timeout_seconds !== undefined
+        ? { timeoutSeconds: entry._openclaw_bridge.timeout_seconds }
+        : {}),
+      ...(entry._openclaw_bridge.fallbacks && entry._openclaw_bridge.fallbacks.length > 0
+        ? { fallbacks: [...entry._openclaw_bridge.fallbacks] }
+        : {}),
       process: proc,
       startedAt: Date.now(),
       restartCount,
@@ -277,7 +287,10 @@ export class SensorSupervisor {
       handle.sessionKey === resolveSessionKey(entry, this.openclaw.defaultSessionKeyPrefix) &&
       handle.agentId === resolveAgentId(entry, "main") &&
       hashConfig(handle.notify ?? null) === hashConfig(entry._openclaw_bridge.notify ?? null) &&
-      (handle.model ?? null) === (entry._openclaw_bridge.model ?? null)
+      (handle.model ?? null) === (entry._openclaw_bridge.model ?? null) &&
+      (handle.thinking ?? null) === (entry._openclaw_bridge.thinking ?? null) &&
+      (handle.timeoutSeconds ?? null) === (entry._openclaw_bridge.timeout_seconds ?? null) &&
+      hashConfig(handle.fallbacks ?? null) === hashConfig(entry._openclaw_bridge.fallbacks ?? null)
     );
   }
 
@@ -339,12 +352,19 @@ export class SensorSupervisor {
     }
 
     const message = renderPrompt(handle.skillId, obj);
+    // `name` groups runs in the OpenClaw job log by sensor — bare-minimum
+    // tagging so users can find a sensor's history without grepping the
+    // full agent log. The /hooks/agent docs list it as optional.
     const payload: Record<string, unknown> = {
       message,
+      name: `w2a-${handle.sensorId}`,
       agentId: handle.agentId,
       sessionKey: handle.sessionKey,
     };
     if (handle.model) payload.model = handle.model;
+    if (handle.thinking) payload.thinking = handle.thinking;
+    if (handle.timeoutSeconds !== undefined) payload.timeoutSeconds = handle.timeoutSeconds;
+    if (handle.fallbacks && handle.fallbacks.length > 0) payload.fallbacks = handle.fallbacks;
     if (handle.notify) {
       payload.deliver = true;
       payload.channel = handle.notify.channel;

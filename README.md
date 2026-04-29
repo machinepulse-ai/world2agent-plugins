@@ -8,6 +8,7 @@ Channel adapters that connect [World2Agent](https://github.com/machinepulse-ai/w
 | --- | --- | --- |
 | [`claude-code-channel`](./claude-code-channel) | [Claude Code](https://docs.claude.com/en/docs/claude-code) | MCP channel adapter + Claude Code plugin bundle. Signals arrive as in-session MCP notifications. |
 | [`hermes-sensor-bridge`](./hermes-sensor-bridge) | [Hermes Agent](https://hermes-agent.nousresearch.com/) | Out-of-process supervisor + webhook bridge. Each signal triggers a fresh `AIAgent.run_conversation()` with the generated handler skill auto-loaded. |
+| [`openclaw-sensor-bridge`](./openclaw-sensor-bridge) | [OpenClaw](https://openclaw.ai) | Out-of-process supervisor + `/hooks/agent` bridge. Each signal triggers a fresh isolated agent turn with the generated handler skill auto-loaded. |
 
 ---
 
@@ -51,6 +52,29 @@ Each signal triggers a fresh agent run against the generated handler skill. See 
 
 ---
 
+## Quick start — OpenClaw
+
+Three steps:
+
+```bash
+npm install -g @world2agent/openclaw-sensor-bridge
+openclaw skills install world2agent-manage
+```
+
+Then send this in your OpenClaw chat:
+
+```
+Use world2agent-manage skill install @quill-io/sensor-frontier-ai-news
+```
+
+The skill walks the SETUP.md Q&A, generates a handler skill, registers the sensor in `~/.world2agent/config.json`, and starts the supervisor. Subsequent signals each trigger a fresh `/hooks/agent` call against the handler.
+
+> First time only: the bridge's `bootstrap.sh` writes a managed `hooks` block into `~/.openclaw/openclaw.json` (auto-generates `hooks.token` if absent, sets `allowRequestSessionKey`, adds `"w2a:"` to `allowedSessionKeyPrefixes`) and asks you to run `openclaw gateway restart` once. A timestamped backup of the original config is kept next to the file. Every install after that is seamless.
+
+If you already have a paired chat platform (Feishu, iMessage, Telegram, …) configured via `<PLATFORM>_HOME_CHANNEL` in `~/.openclaw/.env`, replies are auto-pushed to that chat by default. See [`openclaw-sensor-bridge/README.md`](./openclaw-sensor-bridge/README.md) for the full delivery options and lifecycle scripts.
+
+---
+
 ## Repository layout
 
 ```
@@ -63,7 +87,7 @@ Each signal triggers a fresh agent run against the generated handler skill. See 
 │   ├── skills/                 # MCP-side handler skills
 │   ├── src/
 │   └── package.json
-└── hermes-sensor-bridge/       # @world2agent/hermes-sensor-bridge
+├── hermes-sensor-bridge/       # @world2agent/hermes-sensor-bridge
 │   ├── src/
 │   │   ├── runner/             # per-sensor subprocess
 │   │   └── supervisor/         # daemon (signal → HMAC → POST → Hermes)
@@ -72,6 +96,15 @@ Each signal triggers a fresh agent run against the generated handler skill. See 
 │   │   └── scripts/            # all host-side work (install, remove, list, …)
 │   ├── e2e/
 │   └── package.json
+└── openclaw-sensor-bridge/     # @world2agent/openclaw-sensor-bridge
+    ├── src/
+    │   ├── runner/             # per-sensor subprocess
+    │   └── supervisor/         # daemon (signal → Bearer → POST /hooks/agent → OpenClaw)
+    ├── skills/world2agent-manage/
+    │   ├── SKILL.md            # agent-facing skill
+    │   └── scripts/            # all host-side work (install, remove, list, …)
+    ├── e2e/
+    └── package.json
 ```
 
 ---
@@ -92,6 +125,10 @@ Users pull updates with:
 ### Hermes bridge (`hermes-sensor-bridge`)
 
 Bump `version` in `hermes-sensor-bridge/package.json`, then `pnpm publish --access public --tag alpha` (alpha) or `latest` (stable). Users pull the runtime with `npm install -g @world2agent/hermes-sensor-bridge@<tag>`. The skill is installed separately via `hermes skills install …`; re-run that command with `--force` to refresh to the latest skill content.
+
+### OpenClaw bridge (`openclaw-sensor-bridge`)
+
+Bump `version` in `openclaw-sensor-bridge/package.json`, then `pnpm publish --access public --tag alpha` (alpha) or `latest` (stable). Users pull the runtime with `npm install -g @world2agent/openclaw-sensor-bridge@<tag>`. The skill is installed separately via `openclaw skills install world2agent-manage`; re-run that command to refresh to the latest skill content.
 
 ## License
 
