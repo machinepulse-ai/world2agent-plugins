@@ -4,7 +4,7 @@ import type {
   OpenClawPluginApi,
   OpenClawPluginConfig,
 } from "./openclaw/plugin-sdk/types.js";
-import type { RequiredWorld2AgentPluginConfig } from "./types.js";
+import type { DeliverConfig, RequiredWorld2AgentPluginConfig } from "./types.js";
 
 export const REQUIRED_CONTEXT_INJECTION = "continuation-skip";
 
@@ -59,6 +59,31 @@ export function normalizePluginConfig(
     requestTimeoutMs: asPositiveInteger(raw.requestTimeoutMs) ?? 120_000,
     ingestHmacSecretFile: asOptionalString(raw.ingestHmacSecretFile),
     ingestDedupTtlMs: asPositiveInteger(raw.ingestDedupTtlMs) ?? 3_600_000,
+    deliver: normalizeDeliver((raw as Record<string, unknown>).deliver),
+  };
+}
+
+export function normalizeDeliver(value: unknown): DeliverConfig | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const channel = asOptionalString(raw.channel);
+  const to = asOptionalString(raw.to);
+  // channel + to are both required to actually route a reply: lastChannel
+  // alone wouldn't tell OpenClaw who to send to. Bail silently otherwise so
+  // a half-filled config doesn't break dispatch.
+  if (!channel || !to) return undefined;
+
+  const accountId = asOptionalString(raw.accountId);
+  const threadId =
+    typeof raw.threadId === "number" && Number.isFinite(raw.threadId)
+      ? Math.trunc(raw.threadId)
+      : asOptionalString(raw.threadId);
+
+  return {
+    channel,
+    to,
+    ...(accountId !== undefined ? { accountId } : {}),
+    ...(threadId !== undefined ? { threadId } : {}),
   };
 }
 

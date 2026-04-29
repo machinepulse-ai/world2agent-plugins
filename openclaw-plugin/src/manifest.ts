@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { access, readFile, rm } from "node:fs/promises";
 import { packageToSkillId } from "@world2agent/sdk";
+import { normalizeDeliver } from "./config.js";
 import { ensureWorld2AgentDirs, writeTextAtomic } from "./paths.js";
 import type { SensorEntry, SensorManifest, World2AgentPaths } from "./types.js";
 
@@ -65,6 +66,7 @@ export function removeSensorEntry(
 }
 
 export function normalizeSensorEntry(entry: SensorEntry): SensorEntry {
+  const deliver = normalizeDeliver(entry.deliver);
   return {
     sensor_id: entry.sensor_id,
     pkg: entry.pkg,
@@ -72,6 +74,7 @@ export function normalizeSensorEntry(entry: SensorEntry): SensorEntry {
     enabled: entry.enabled !== false,
     isolated: entry.isolated === true,
     config: entry.config ?? {},
+    ...(deliver ? { deliver } : {}),
   };
 }
 
@@ -146,6 +149,7 @@ function parseSensorEntry(raw: unknown, index: number): SensorEntry {
     throw new Error(`sensor[${index}].config must be an object`);
   }
 
+  const deliver = normalizeDeliver(entry.deliver);
   return {
     sensor_id: sensorId,
     pkg,
@@ -156,6 +160,7 @@ function parseSensorEntry(raw: unknown, index: number): SensorEntry {
     enabled,
     isolated,
     config: config as Record<string, unknown>,
+    ...(deliver ? { deliver } : {}),
   };
 }
 

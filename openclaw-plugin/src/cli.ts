@@ -3,6 +3,7 @@ import { packageToSkillId } from "@world2agent/sdk";
 import {
   assertContextInjectionCompatible,
   loadEffectiveOpenClawConfig,
+  normalizeDeliver,
   upsertDedicatedAgentSkillAllowlist,
 } from "./config.js";
 import { ensurePackageInstalled, loadConfigFile, maybeUninstallPackage, runCommand, writeGeneratedSkill } from "./install.js";
@@ -56,6 +57,16 @@ export function registerWorld2AgentCli(services: World2AgentCliServices): void {
           "--skip-generate-skill",
           "Do not auto-generate a fallback SKILL.md. Use this when the calling agent has already written a personalized handler skill via the SETUP.md Q&A flow.",
         )
+        .option(
+          "--deliver-channel <id>",
+          "Channel id to push assistant replies through (e.g. feishu, lark, whatsapp, telegram). Must match an enabled OpenClaw channel plugin.",
+        )
+        .option(
+          "--deliver-to <id>",
+          "Recipient on the deliver channel (chat id, user id, or platform-specific target). Required when --deliver-channel is set.",
+        )
+        .option("--deliver-account <id>", "Optional account id for multi-account channels")
+        .option("--deliver-thread <id>", "Optional thread/topic id for routing replies inside a thread")
         .action(async (pkg: string, options: Record<string, unknown>) => {
           printJson(await runAddCommand(services, pkg, options));
         });
@@ -117,6 +128,23 @@ async function runAddCommand(
   const skillId = packageToSkillId(pkg);
   const sensorConfig = await loadConfigFile(configFile, configJson, installed);
 
+  const deliverChannel = optionString(options, "deliverChannel");
+  const deliverTo = optionString(options, "deliverTo");
+  if ((deliverChannel && !deliverTo) || (deliverTo && !deliverChannel)) {
+    throw new Error(
+      "--deliver-channel and --deliver-to must be set together (channel without recipient — or vice versa — has no routing target).",
+    );
+  }
+  const deliver =
+    deliverChannel && deliverTo
+      ? normalizeDeliver({
+          channel: deliverChannel,
+          to: deliverTo,
+          accountId: optionString(options, "deliverAccount"),
+          threadId: optionString(options, "deliverThread"),
+        })
+      : undefined;
+
   // The agent-driven path (world2agent-manage skill running SETUP.md Q&A)
   // writes a personalized SKILL.md before invoking this command and passes
   // --skip-generate-skill. The fallback path (direct CLI use) lets the
@@ -135,6 +163,7 @@ async function runAddCommand(
     enabled: true,
     isolated,
     config: sensorConfig,
+    ...(deliver ? { deliver } : {}),
   };
   await writeManifest(services.paths, upsertSensorEntry(manifest, entry));
 
@@ -153,6 +182,7 @@ async function runAddCommand(
     isolated,
     skill_generated: skillGenerated.written,
     skill_path: join(services.paths.openclawSkillsDir, skillId, "SKILL.md"),
+    deliver: deliver ?? null,
     allowlist,
     reload,
   };

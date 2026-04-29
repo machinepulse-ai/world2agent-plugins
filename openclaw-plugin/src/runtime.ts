@@ -113,6 +113,7 @@ export class SensorRuntime {
             sensorId: entry.sensor_id,
             skillId: entry.skill_id,
             signal,
+            ...(entry.deliver ? { deliver: entry.deliver } : {}),
           });
           this.log(
             `[w2a/${entry.sensor_id}] dispatched ${signal.signal_id} [${signal.event?.type ?? "unknown"}]`,

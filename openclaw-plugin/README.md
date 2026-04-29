@@ -159,6 +159,61 @@ needs tuning.
 - Uses a stable per-sensor session id: `w2a-<sensor_id>` (and session key `agent:<defaultAgentId>:w2a-<sensor_id>`).
 - Requires plugin config `ingestUrl` only when `isolated: true` sensors are used.
 
+## Pushing replies to a chat platform (Lark / WhatsApp / Telegram / …)
+
+By default a sensor-driven turn stays inside the W2A session lane — the agent's
+reply is only visible in `openclaw sessions --agent main` / the dashboard.
+
+If you've already paired a chat platform (any plugin in `openclaw plugins list
+--json` with a non-empty `channelIds` array — feishu, lark, whatsapp, telegram,
+discord, slack, signal, imessage, line, msteams, matrix, …), you can have the
+plugin route the assistant reply back to that chat. There are two grains:
+
+**Plugin-wide default** — every sensor's reply lands in the same chat. Set in
+this plugin's config block in `~/.openclaw/openclaw.json`:
+
+```jsonc
+{
+  "plugins": {
+    "world2agent": {
+      "deliver": {
+        "channel": "feishu",
+        "to": "oc_chat_xxxxxxxxxxxxxxxx"
+      }
+    }
+  }
+}
+```
+
+**Per-sensor override** — different sensors push to different chats. Pass at
+install time:
+
+```bash
+openclaw world2agent sensor add @world2agent/sensor-hackernews \
+  --config-json '{"top_n":10,"min_score":50}' \
+  --deliver-channel feishu \
+  --deliver-to oc_chat_xxxxxxxxxxxxxxxx
+```
+
+Optional flags: `--deliver-account <id>` for multi-account channels,
+`--deliver-thread <id>` to post into a specific thread/topic.
+
+When `deliver` is set, the plugin (a) writes `lastChannel` / `lastTo` /
+`deliveryContext` onto the W2A session entry and (b) dispatches via
+`runtime.subagent.run({ sessionKey, message, deliver: true })` instead of
+the lower-level `runEmbeddedAgent`. The subagent path internally pairs
+`runEmbeddedAgent` with `deliverAgentCommandResult` — that second step is
+what actually reads `sessionEntry.deliveryContext` and invokes the channel
+plugin's send. `runEmbeddedAgent` alone would produce a transcript reply
+but never push it outbound. No second LLM call, no plugin-side IM client.
+
+If neither plugin-level nor per-sensor deliver is set, OR the OpenClaw
+runtime predates `runtime.subagent.run`, the plugin falls back to plain
+`runEmbeddedAgent` (the reply stays in the W2A session lane). If the named
+channel plugin isn't loaded, the run still completes but OpenClaw's
+outbound resolver refuses to send — check `openclaw plugins list --json`
+to confirm the channel id matches an enabled plugin.
+
 ## ContextInjection Prerequisite
 
 This plugin refuses to start unless `agents.defaults.contextInjection` is exactly `"continuation-skip"`.

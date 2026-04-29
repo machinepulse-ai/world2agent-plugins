@@ -60,6 +60,30 @@
         "minimum": 1000,
         "default": 3600000,
         "description": "How long X-Request-ID dedup entries stay in memory."
+      },
+      "deliver": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Default delivery target for sensor-driven agent replies. When set, OpenClaw routes the assistant reply through the named channel plugin (e.g. feishu, lark, whatsapp, telegram) to the recipient. Per-sensor manifest entries can override this. Leave unset to keep replies inside the W2A session lane only.",
+        "required": ["channel", "to"],
+        "properties": {
+          "channel": {
+            "type": "string",
+            "description": "Channel id matching an enabled OpenClaw channel plugin (run `openclaw plugins list --json` and pick a plugin that exposes a non-empty channelIds array)."
+          },
+          "to": {
+            "type": "string",
+            "description": "Recipient identifier on the channel: chat id, user id, or platform-specific target."
+          },
+          "accountId": {
+            "type": "string",
+            "description": "Optional account id for multi-account channels."
+          },
+          "threadId": {
+            "type": ["string", "number"],
+            "description": "Optional thread/topic id for routing inside a thread."
+          }
+        }
       }
     }
   }

@@ -15,6 +15,13 @@ export interface World2AgentPaths {
   ingestHmacSecretFile: string;
 }
 
+export interface DeliverConfig {
+  channel: string;
+  to: string;
+  accountId?: string;
+  threadId?: string | number;
+}
+
 export interface SensorEntry {
   sensor_id: string;
   pkg: string;
@@ -22,6 +29,7 @@ export interface SensorEntry {
   enabled: boolean;
   isolated?: boolean;
   config: Record<string, unknown>;
+  deliver?: DeliverConfig;
 }
 
 export interface SensorManifest {
@@ -34,6 +42,7 @@ export interface DispatcherDispatchInput {
   skillId: string;
   signal: W2ASignal;
   sessionId?: string;
+  deliver?: DeliverConfig;
 }
 
 export interface Dispatcher {
@@ -51,6 +60,7 @@ export interface HttpIngestEnvelope {
   sensor_id: string;
   skill_id: string;
   signal: W2ASignal;
+  deliver?: DeliverConfig;
 }
 
 export interface HttpDispatcherOptions {
@@ -89,6 +99,7 @@ export interface RequiredWorld2AgentPluginConfig {
   requestTimeoutMs: number;
   ingestHmacSecretFile?: string;
   ingestDedupTtlMs: number;
+  deliver?: DeliverConfig;
 }
 
 export interface IsolatedRunnerHandle {

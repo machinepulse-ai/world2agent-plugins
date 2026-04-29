@@ -150,6 +150,44 @@ Optional flags:
   multiple instances of the same sensor)
 - `--isolated` to run the sensor out-of-process (for unstable third-party
   sensors)
+- `--deliver-channel <id> --deliver-to <id>` to push the agent's reply to a
+  chat platform (see step 6b).
+
+### Step 6b — Offer to push replies to a chat platform
+
+Check whether the user has any inbound chat-platform plugin enabled:
+
+```bash
+openclaw plugins list --json | jq -r \
+  '.plugins[] | select(.enabled == true) | select(.channelIds | length > 0) | .id'
+```
+
+If the output is **empty**, skip this step — there's no IM to push to. The
+sensor will still run; replies stay in the OpenClaw session lane (visible via
+`openclaw sessions --agent main` and the dashboard).
+
+If one or more channels are listed (e.g. `feishu`, `lark`, `whatsapp`,
+`telegram`, `discord`, `slack`, `signal`, `imessage`, `line`, `msteams`),
+ask the user once — in their language — whether they want this sensor's
+replies pushed to one of those chats. If yes, also ask for the recipient
+target id (chat id, user id, or platform-specific target — the user knows
+this from when they paired the channel; never invent it).
+
+Append to the install command:
+
+```bash
+  --deliver-channel <channel_id> \
+  --deliver-to <chat_id>
+```
+
+Optional: `--deliver-account <id>` for multi-account channels,
+`--deliver-thread <id>` to post into a specific thread/topic.
+
+The user can also set this once globally under
+`plugins.world2agent.deliver` in `~/.openclaw/openclaw.json`; per-sensor
+flags override that default. If the user wants the same target for
+everything they're about to install, suggest they set the global default
+instead of repeating the flags every time.
 
 ### Step 7 — Confirm and tell the user how to activate
 

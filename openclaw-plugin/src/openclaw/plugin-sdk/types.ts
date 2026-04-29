@@ -116,6 +116,44 @@ export interface OpenClawRuntimeAgentApi {
   session?: OpenClawRuntimeAgentSessionApi;
 }
 
+export interface OpenClawSubagentRunParams {
+  sessionKey: string;
+  message: string;
+  provider?: string;
+  model?: string;
+  /**
+   * When true, OpenClaw runs the embedded agent AND calls
+   * deliverAgentCommandResult — the assistant reply is routed to the
+   * channel/recipient stored on the session entry's deliveryContext.
+   * Without `deliver: true`, the run produces an assistant message that
+   * stays inside the session lane (no IM push).
+   */
+  deliver?: boolean;
+  extraSystemPrompt?: string;
+  lane?: string;
+  lightContext?: boolean;
+  idempotencyKey?: string;
+}
+
+export interface OpenClawSubagentRunResult {
+  runId: string;
+}
+
+export interface OpenClawSubagentWaitParams {
+  runId: string;
+  timeoutMs?: number;
+}
+
+export interface OpenClawSubagentWaitResult {
+  status: "ok" | "error" | "timeout";
+  error?: string;
+}
+
+export interface OpenClawRuntimeSubagentApi {
+  run?(params: OpenClawSubagentRunParams): Promise<OpenClawSubagentRunResult>;
+  waitForRun?(params: OpenClawSubagentWaitParams): Promise<OpenClawSubagentWaitResult>;
+}
+
 export interface OpenClawConfigWriteOptions {
   afterWrite?: { mode?: "auto" | "skip" | "refresh" } & Record<string, unknown>;
   [key: string]: unknown;
@@ -204,6 +242,7 @@ export interface OpenClawPluginApi {
     agent?: OpenClawRuntimeAgentApi;
     config?: OpenClawRuntimeConfigApi;
     system?: OpenClawRuntimeSystemApi;
+    subagent?: OpenClawRuntimeSubagentApi;
   };
 }
 

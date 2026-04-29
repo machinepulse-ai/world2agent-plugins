@@ -9,6 +9,7 @@ import type {
   OpenClawPluginApi,
 } from "./openclaw/plugin-sdk/types.js";
 import type {
+  DeliverConfig,
   Dispatcher,
   DispatcherDispatchInput,
   EmbeddedDispatcherOptions,
@@ -91,6 +92,11 @@ export class EmbeddedDispatcher implements Dispatcher {
       this.options.pluginConfig,
     );
 
+    // Per-sensor deliver overrides plugin default. Both are optional — when
+    // neither is set, the session entry stays untargeted and OpenClaw keeps
+    // the reply inside the W2A session lane (current behavior).
+    const deliver = input.deliver ?? this.options.pluginConfig.deliver;
+
     // ─────────────────────────────────────────────────────────────────
     //  Dispatch via runEmbeddedAgent + `# System Event` prompt prefix.
     //
@@ -109,19 +115,23 @@ export class EmbeddedDispatcher implements Dispatcher {
     //  agent treats the `# System Event` block as an external notification
     //  thanks to the framing, even though it lives in user-role position.
     // ─────────────────────────────────────────────────────────────────
-    if (typeof runtimeAgent?.runEmbeddedAgent !== "function") {
+    const runtimeSubagent = api.runtime?.subagent;
+    const canDeliverViaSubagent =
+      Boolean(deliver) && typeof runtimeSubagent?.run === "function";
+
+    if (!canDeliverViaSubagent && typeof runtimeAgent?.runEmbeddedAgent !== "function") {
       throw new Error(
-        "OpenClaw runtime does not expose runEmbeddedAgent — this plugin cannot dispatch signals against this OpenClaw version.",
+        "OpenClaw runtime exposes neither runtime.subagent.run nor runtime.agent.runEmbeddedAgent — this plugin cannot dispatch signals against this OpenClaw version.",
       );
     }
 
     const workspaceDir =
       this.options.pluginConfig.workspaceDir ??
-      tryCall(() => runtimeAgent.resolveAgentWorkspaceDir?.(config, agentId)) ??
+      tryCall(() => runtimeAgent?.resolveAgentWorkspaceDir?.(config, agentId)) ??
       join(openclawHome, "workspace");
     const timeoutMs =
       this.options.pluginConfig.requestTimeoutMs ??
-      tryCall(() => runtimeAgent.resolveAgentTimeoutMs?.(config)) ??
+      tryCall(() => runtimeAgent?.resolveAgentTimeoutMs?.(config)) ??
       120_000;
 
     await ensureSessionRegistered({
@@ -133,6 +143,7 @@ export class EmbeddedDispatcher implements Dispatcher {
       sensorId: input.sensorId,
       provider,
       model,
+      deliver,
     });
 
     const promptForTurn =
@@ -145,20 +156,74 @@ export class EmbeddedDispatcher implements Dispatcher {
       "---\n\n" +
       signalText;
 
-    const result = await runtimeAgent.runEmbeddedAgent!({
-      sessionId,
-      sessionKey,
-      agentId,
-      runId: randomUUID(),
-      sessionFile,
-      workspaceDir,
-      agentDir,
-      config,
-      prompt: promptForTurn,
-      timeoutMs,
-      ...(provider ? { provider } : {}),
-      ...(model ? { model } : {}),
-    } as Parameters<NonNullable<typeof runtimeAgent.runEmbeddedAgent>>[0]);
+    // ─────────────────────────────────────────────────────────────────
+    //  Delivery path selection.
+    //
+    //  When deliver is configured AND OpenClaw exposes runtime.subagent.run,
+    //  use the high-level subagent path: it wraps runEmbeddedAgent and ALSO
+    //  calls deliverAgentCommandResult after the run, which is what actually
+    //  pushes the assistant reply to the channel plugin (feishu/lark/...).
+    //
+    //  runEmbeddedAgent alone does NOT deliver — it just produces an
+    //  assistant message in the session transcript. Only deliverAgentCommandResult
+    //  reads sessionEntry.deliveryContext / messageChannel and invokes
+    //  channel.send. We wrote deliveryContext to the session entry above,
+    //  but that's load-bearing only when something downstream reads it.
+    //
+    //  Fallback path (no subagent / no deliver): keep the original
+    //  runEmbeddedAgent call so behavior is unchanged for users who haven't
+    //  configured deliver — and to support OpenClaw versions that predate
+    //  the subagent runtime.
+    // ─────────────────────────────────────────────────────────────────
+    let result: unknown;
+    if (canDeliverViaSubagent) {
+      // Don't pass provider/model — runtime.subagent.run rejects per-call
+      // overrides from plugins ("provider/model override is not authorized
+      // for this plugin subagent run."). Let OpenClaw resolve from agent
+      // defaults (resolved upstream and persisted on the session entry).
+      const { runId } = await runtimeSubagent!.run!({
+        sessionKey,
+        message: promptForTurn,
+        deliver: true,
+      });
+      // Wait so the dispatcher's per-sensor queue stays meaningful (next
+      // signal for the same sensor doesn't kick off until this reply has
+      // been delivered). If waitForRun isn't available, fall through with
+      // just the runId — fire-and-forget.
+      if (typeof runtimeSubagent!.waitForRun === "function") {
+        const wait = await runtimeSubagent!.waitForRun({ runId, timeoutMs });
+        result = { runId, wait };
+      } else {
+        result = { runId };
+      }
+    } else {
+      result = await runtimeAgent!.runEmbeddedAgent!({
+        sessionId,
+        sessionKey,
+        agentId,
+        runId: randomUUID(),
+        sessionFile,
+        workspaceDir,
+        agentDir,
+        config,
+        prompt: promptForTurn,
+        timeoutMs,
+        ...(provider ? { provider } : {}),
+        ...(model ? { model } : {}),
+        // Pass turn-source delivery hints. Only useful in old runtimes that
+        // already auto-deliver from runEmbeddedAgent — modern runtimes need
+        // the subagent.run path above for actual outbound. Kept for forward
+        // compat / future runtime versions that wire this through.
+        ...(deliver
+          ? {
+              messageChannel: deliver.channel,
+              messageTo: deliver.to,
+              ...(deliver.threadId !== undefined ? { messageThreadId: deliver.threadId } : {}),
+              ...(deliver.accountId ? { agentAccountId: deliver.accountId } : {}),
+            }
+          : {}),
+      } as Parameters<NonNullable<NonNullable<typeof runtimeAgent>["runEmbeddedAgent"]>>[0]);
+    }
 
     await mirrorIsolatedSessionFiles(agentDir, sessionId).catch(() => undefined);
     await ensureSessionRegistered({
@@ -170,9 +235,14 @@ export class EmbeddedDispatcher implements Dispatcher {
       sensorId: input.sensorId,
       provider,
       model,
+      deliver,
     }).catch(() => undefined);
 
-    return { ok: true, path: "embedded", result };
+    return {
+      ok: true,
+      path: canDeliverViaSubagent ? "subagent" : "embedded",
+      result,
+    };
   }
 }
 
@@ -185,14 +255,50 @@ async function ensureSessionRegistered(params: {
   sensorId: string;
   provider?: string;
   model?: string;
+  deliver?: DeliverConfig;
 }): Promise<void> {
   const now = Date.now();
+  const deliver = params.deliver;
 
-  // Build the entry once, used by both paths below.
-  const entryFor = (existing?: Record<string, unknown>): Record<string, unknown> =>
-    existing
-      ? { ...existing, updatedAt: now, lastInteractionAt: now }
-      : {
+  // When deliver is configured, mark the session with channel + recipient so
+  // OpenClaw's resolveAgentDeliveryPlan picks it up and routes the assistant
+  // reply through the corresponding channel plugin (lark/feishu/whatsapp/...).
+  // Without this, lastChannel="world2agent" keeps the reply inside the W2A
+  // session lane only.
+  const deliverFields = deliver
+    ? {
+        lastChannel: deliver.channel,
+        lastTo: deliver.to,
+        ...(deliver.accountId ? { lastAccountId: deliver.accountId } : {}),
+        ...(deliver.threadId !== undefined ? { lastThreadId: deliver.threadId } : {}),
+        deliveryContext: {
+          channel: deliver.channel,
+          to: deliver.to,
+          ...(deliver.accountId ? { accountId: deliver.accountId } : {}),
+          ...(deliver.threadId !== undefined ? { threadId: deliver.threadId } : {}),
+        },
+      }
+    : { lastChannel: "world2agent" };
+
+  // Build the entry once, used by both paths below. On existing entries we
+  // also re-assert deliverFields so a config change (e.g. user re-paired
+  // their channel) takes effect on the very next signal without needing a
+  // session reset. We also strip a stale `agentHarnessId` because earlier
+  // versions of this plugin pinned `agentHarnessId: "claude-cli"` and that
+  // value, once persisted, makes OpenClaw refuse the run on hosts that
+  // don't have that harness registered.
+  const entryFor = (existing?: Record<string, unknown>): Record<string, unknown> => {
+    if (existing) {
+      const merged: Record<string, unknown> = {
+        ...existing,
+        ...deliverFields,
+        updatedAt: now,
+        lastInteractionAt: now,
+      };
+      delete merged.agentHarnessId;
+      return merged;
+    }
+    return {
           sessionId: params.sessionId,
           sessionFile: params.sessionFile,
           sessionStartedAt: now,
@@ -203,8 +309,12 @@ async function ensureSessionRegistered(params: {
           status: "idle",
           origin: "world2agent",
           chatType: "embedded",
-          lastChannel: "world2agent",
-          agentHarnessId: "claude-cli",
+          ...deliverFields,
+          // No agentHarnessId — let OpenClaw resolve from agent defaults.
+          // Pinning a specific harness here used to break setups that don't
+          // have that harness registered (e.g. claude-cli unavailable on a
+          // host that runs openrouter/auto). Once written into the session
+          // entry, OpenClaw refuses to switch harness for the session id.
           ...(params.model ? { model: params.model } : {}),
           ...(params.provider ? { modelProvider: params.provider } : {}),
           totalTokens: 0,
@@ -215,6 +325,7 @@ async function ensureSessionRegistered(params: {
           contextTokens: 0,
           runtimeMs: 0,
         };
+  };
 
   // Try OpenClaw's session-store API first (preferred — it integrates with
   // OpenClaw's in-memory caches). Best-effort; if it silently no-ops or
@@ -354,6 +465,7 @@ export class HttpDispatcher {
       sensorId: payload.sensor_id,
       skillId: payload.skill_id,
       signal: payload.signal,
+      ...(payload.deliver ? { deliver: payload.deliver } : {}),
     });
 
     writeJson(res, 202, { ok: true });

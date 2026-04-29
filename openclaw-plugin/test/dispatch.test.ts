@@ -67,6 +67,182 @@ describe("EmbeddedDispatcher", () => {
     expect(calls[0]?.prompt.startsWith("# System Event")).toBe(true);
     expect(calls[0]?.prompt).toContain("Use skill: world2agent-sensor-fake-tick");
   });
+
+  it("propagates deliver config to runEmbeddedAgent and persists it on the session entry", async () => {
+    const calls: EmbeddedAgentRunRequest[] = [];
+    const root = `/tmp/w2a-openclaw-dispatch-deliver-${Date.now()}`;
+    const dispatcher = new EmbeddedDispatcher({
+      api: {
+        runtime: {
+          agent: {
+            runEmbeddedAgent: vi.fn(async (request: EmbeddedAgentRunRequest) => {
+              calls.push(request);
+              return { ok: true };
+            }),
+          },
+        },
+      },
+      openclawConfigRef: {
+        current: {
+          agents: {
+            defaults: { contextInjection: "continuation-skip" },
+            list: [],
+          },
+        },
+      },
+      pluginConfig: {
+        defaultAgentId: "world2agent",
+        requestTimeoutMs: 12_345,
+        ingestDedupTtlMs: 3_600_000,
+        deliver: {
+          channel: "feishu",
+          to: "oc_chat_abc123",
+          accountId: "acct-1",
+        },
+      },
+      paths: makePaths(root),
+    });
+
+    await dispatcher.dispatch({
+      sensorId: "fake-tick",
+      skillId: "world2agent-sensor-fake-tick",
+      signal: TEST_SIGNAL,
+    });
+
+    expect(calls).toHaveLength(1);
+    const req = calls[0] as Record<string, unknown>;
+    expect(req.messageChannel).toBe("feishu");
+    expect(req.messageTo).toBe("oc_chat_abc123");
+    expect(req.agentAccountId).toBe("acct-1");
+
+    const fs = await import("node:fs/promises");
+    const storePath = `${root}/.openclaw/agents/world2agent/sessions/sessions.json`;
+    const raw = JSON.parse(await fs.readFile(storePath, "utf8")) as Record<string, unknown>;
+    const entry = raw["agent:world2agent:w2a-fake-tick"] as Record<string, unknown>;
+    expect(entry.lastChannel).toBe("feishu");
+    expect(entry.lastTo).toBe("oc_chat_abc123");
+    expect(entry.lastAccountId).toBe("acct-1");
+    expect(entry.deliveryContext).toMatchObject({
+      channel: "feishu",
+      to: "oc_chat_abc123",
+      accountId: "acct-1",
+    });
+  });
+
+  it("uses runtime.subagent.run with deliver:true when deliver is configured AND subagent is exposed", async () => {
+    const subagentCalls: Array<Record<string, unknown>> = [];
+    const waitCalls: Array<Record<string, unknown>> = [];
+    const runEmbedded = vi.fn(async () => ({ ok: true }));
+    const root = `/tmp/w2a-openclaw-dispatch-subagent-${Date.now()}`;
+    const dispatcher = new EmbeddedDispatcher({
+      api: {
+        runtime: {
+          agent: {
+            runEmbeddedAgent: runEmbedded,
+          },
+          subagent: {
+            run: vi.fn(async (params: Record<string, unknown>) => {
+              subagentCalls.push(params);
+              return { runId: "run-abc" };
+            }),
+            waitForRun: vi.fn(async (params: Record<string, unknown>) => {
+              waitCalls.push(params);
+              return { status: "ok" };
+            }),
+          },
+        },
+      },
+      openclawConfigRef: {
+        current: {
+          agents: {
+            defaults: { contextInjection: "continuation-skip" },
+            list: [],
+          },
+        },
+      },
+      pluginConfig: {
+        defaultAgentId: "world2agent",
+        requestTimeoutMs: 12_345,
+        ingestDedupTtlMs: 3_600_000,
+        deliver: { channel: "feishu", to: "oc_chat_xxx" },
+      },
+      paths: makePaths(root),
+    });
+
+    const result = (await dispatcher.dispatch({
+      sensorId: "fake-tick",
+      skillId: "world2agent-sensor-fake-tick",
+      signal: TEST_SIGNAL,
+    })) as { path: string; result: { runId: string } };
+
+    expect(result.path).toBe("subagent");
+    expect(result.result.runId).toBe("run-abc");
+    expect(subagentCalls).toHaveLength(1);
+    expect(subagentCalls[0]?.sessionKey).toBe("agent:world2agent:w2a-fake-tick");
+    expect(subagentCalls[0]?.deliver).toBe(true);
+    expect((subagentCalls[0]?.message as string).startsWith("# System Event")).toBe(true);
+    // Per-call provider/model overrides are rejected by OpenClaw's plugin
+    // subagent runtime — we MUST NOT pass them; the runtime resolves the
+    // provider/model from agent defaults instead.
+    expect(subagentCalls[0]).not.toHaveProperty("provider");
+    expect(subagentCalls[0]).not.toHaveProperty("model");
+    expect(waitCalls).toHaveLength(1);
+    expect(waitCalls[0]?.runId).toBe("run-abc");
+    // runEmbeddedAgent must NOT be invoked when subagent path is taken
+    expect(runEmbedded).not.toHaveBeenCalled();
+
+    // Session entry still gets deliveryContext written so the runtime can
+    // resolve the channel target inside subagent.run.
+    const fs = await import("node:fs/promises");
+    const storePath = `${root}/.openclaw/agents/world2agent/sessions/sessions.json`;
+    const raw = JSON.parse(await fs.readFile(storePath, "utf8")) as Record<string, unknown>;
+    const entry = raw["agent:world2agent:w2a-fake-tick"] as Record<string, unknown>;
+    expect(entry.lastChannel).toBe("feishu");
+    expect(entry.lastTo).toBe("oc_chat_xxx");
+  });
+
+  it("per-sensor deliver in dispatch input overrides plugin default", async () => {
+    const calls: EmbeddedAgentRunRequest[] = [];
+    const dispatcher = new EmbeddedDispatcher({
+      api: {
+        runtime: {
+          agent: {
+            runEmbeddedAgent: vi.fn(async (request: EmbeddedAgentRunRequest) => {
+              calls.push(request);
+              return { ok: true };
+            }),
+          },
+        },
+      },
+      openclawConfigRef: {
+        current: {
+          agents: {
+            defaults: { contextInjection: "continuation-skip" },
+            list: [],
+          },
+        },
+      },
+      pluginConfig: {
+        defaultAgentId: "world2agent",
+        requestTimeoutMs: 12_345,
+        ingestDedupTtlMs: 3_600_000,
+        deliver: { channel: "feishu", to: "default-chat" },
+      },
+      paths: makePaths(`/tmp/w2a-openclaw-dispatch-override-${Date.now()}`),
+    });
+
+    await dispatcher.dispatch({
+      sensorId: "fake-tick",
+      skillId: "world2agent-sensor-fake-tick",
+      signal: TEST_SIGNAL,
+      deliver: { channel: "telegram", to: "user-42" },
+    });
+
+    expect(calls).toHaveLength(1);
+    const req = calls[0] as Record<string, unknown>;
+    expect(req.messageChannel).toBe("telegram");
+    expect(req.messageTo).toBe("user-42");
+  });
 });
 
 describe("HttpDispatcher", () => {
