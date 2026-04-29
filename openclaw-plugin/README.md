@@ -83,7 +83,13 @@ The plugin ships a `world2agent-manage` skill that activates on this kind of int
 2. Ask you 1–3 questions defined in that file (poll thresholds, your topics of interest, reply depth)
 3. Fill the SKILL.md template with your answers and write it to `~/.openclaw/skills/world2agent-sensor-hackernews/SKILL.md`
 4. Run `openclaw world2agent sensor add ... --skip-generate-skill` to register
-5. Tell you when the first signal will arrive
+5. Ask **you** to run `openclaw gateway restart` in your terminal (the agent
+   intentionally does NOT run this itself — restarting the gateway from
+   inside the chat would kill this very chat session mid-reply)
+6. Tell you when the first signal will arrive **and which session lane to
+   open in dashboard** to see the agent's replies (signals route to a
+   separate `w2a-<sensor>` session, not your main chat — see
+   ["Where to view signal-driven agent runs"](#where-to-view-signal-driven-agent-runs) below)
 
 This personalized SKILL.md is what makes the agent reply meaningfully to relevant signals (instead of skipping every signal silently because it has no anchor for "what's relevant to this user").
 
@@ -105,30 +111,45 @@ openclaw world2agent reload
 # falls back to `openclaw gateway restart` if reload times out
 ```
 
-Within ~60 seconds the sensor will start polling. Each emitted signal triggers an agent turn under sessionKey `agent:main:w2a-<sensor>`, with the signal framed as a `# System Event` block.
+> ⚠️ **Run the restart in your own terminal — never inside an OpenClaw chat session.** `openclaw gateway restart` kills the gateway process, which terminates any in-flight chat reply mid-sentence. The conversational install path explicitly hands the restart back to the user for this reason.
+
+Within ~60 seconds of the restart, the sensor will start polling. Each emitted signal triggers an agent turn under sessionKey `agent:main:w2a-<sensor>`, with the signal framed as a `# System Event` block.
 
 ## Where to view signal-driven agent runs
 
-Each sensor gets a stable session id `w2a-<sensor_id>`, scoped to your default agent (`main` unless you overrode `defaultAgentId`). Signals are injected via OpenClaw's system-event queue + heartbeat — **the W2A signal arrives as a `System:` block in the agent turn, not as a user message**. You can view the resulting conversation in three ways:
+Each sensor gets its own session lane, separate from your main chat. The
+lane is keyed `agent:<defaultAgentId>:w2a-<sensor_id>` (e.g.
+`agent:main:w2a-hackernews`), with stable session id `w2a-<sensor_id>`. The
+plugin dispatches signals via `runEmbeddedAgent` with a `# System Event`
+markdown frame in the prompt, so the signal lives in user-role position
+within the W2A session — but **never in your main chat session**.
+
+Concrete: if you ran the conversational install for Hacker News, look for
+the `w2a-hackernews` session, not `main`. Your `main` chat is untouched.
 
 ```bash
-# CLI — list W2A sessions on the main agent
+# CLI — list W2A sessions on the main agent (with last-active filter)
 openclaw sessions --agent main --active 60
-# (or `--agent world2agent` if you set defaultAgentId to a dedicated agent)
+# expected to include: w2a-hackernews
 
-# Dashboard — open the OpenClaw control UI
+# Dashboard — open OpenClaw's control UI, then switch to the
+# `w2a-hackernews` (or w2a-<your sensor>) session in the sidebar
 open http://127.0.0.1:18789/
 
 # Direct file access (for debugging)
 ls ~/.openclaw/agents/main/sessions/
-# w2a-hackernews.jsonl              ← session metadata
+# w2a-hackernews.jsonl              ← signal-handling transcript
 # w2a-hackernews.trajectory.jsonl   ← full LLM tool-call trajectory
-# sessions.json                     ← OpenClaw session index (includes
-#                                     `agent:main:w2a-<sensor>` lanes
-#                                     alongside `agent:main:main` chat lane)
+# sessions.json                     ← OpenClaw session index (lists both
+#                                     `agent:main:main` chat lane AND
+#                                     `agent:main:w2a-<sensor>` lanes)
 ```
 
-Your normal chat with `main` agent (sessionKey `agent:main:main`) is **untouched** — W2A signals only show up under `agent:main:w2a-<sensor_id>` lanes.
+Your normal chat with the `main` agent (sessionKey `agent:main:main`) is
+**untouched** — W2A signals only show up under `agent:main:w2a-<sensor_id>`
+lanes. Open one of those lanes to see how the agent is reacting to
+incoming signals; that's where you'll spot whether your handler SKILL.md
+needs tuning.
 
 ## Scope
 

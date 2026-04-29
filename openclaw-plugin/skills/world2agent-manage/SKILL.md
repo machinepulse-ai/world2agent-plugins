@@ -151,16 +151,36 @@ Optional flags:
 - `--isolated` to run the sensor out-of-process (for unstable third-party
   sensors)
 
-### Step 7 — Confirm and reload
+### Step 7 — Confirm and tell the user how to activate
 
-If the CLI's `reload` field returns `ok: true`, the sensor is polling. If
-not, ask the user to run `openclaw gateway restart` (the plugin process
-caches its config at register time).
+If the CLI's `reload` field returns `ok: true`, the sensor is already
+polling — done.
 
-Tell the user:
-- which sensor id was created
-- where the personalized SKILL.md lives
-- when to expect the first signal (sensor's poll interval)
+If reload failed (timeout is the common case), **DO NOT run
+`openclaw gateway restart` yourself**. Restarting the gateway from inside
+this chat would kill the gateway process — including this very chat
+session — and the user would see your reply truncated mid-sentence. Always
+hand the restart back to the user. Tell them, in their language, something
+like:
+
+> 装好了。新 sensor 需要 gateway 重启才会开始 polling。请你在终端跑
+> `openclaw gateway restart`（我没法自己跑这条命令——它会把当前这个
+> chat session 一起重启，对话会被截断）。重启后 ~60 秒内会拉到第一条信号。
+
+Then summarize for the user:
+
+- **sensor id** that was created (e.g. `hackernews`)
+- **where the personalized SKILL.md lives** (`~/.openclaw/skills/<skill_id>/SKILL.md`)
+  so they know what to edit later if their preferences change
+- **where signal-driven runs will appear**: signals do NOT pollute their
+  main chat lane. Each sensor gets its own session lane keyed
+  `agent:main:w2a-<sensor_id>` (sessionId `w2a-<sensor_id>`). Tell the
+  user to switch to that lane in dashboard
+  (<http://127.0.0.1:18789/>) — or run
+  `openclaw sessions --agent main --active 60` from CLI — to see
+  the agent's responses to incoming signals. The SKILL.md they just
+  configured drives those replies.
+- **when to expect the first signal** based on the sensor's poll interval
 
 ## List sensors
 
