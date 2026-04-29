@@ -1,6 +1,6 @@
 {
   "name": "@world2agent/hermes-sensor-bridge",
-  "version": "0.0.0-dev",
+  "version": "0.1.0-alpha.0",
   "description": "World2Agent bridge for Hermes Agent — runs sensors as supervised subprocesses and delivers their signals into Hermes via webhook subscriptions",
   "license": "Apache-2.0",
   "author": "MachinePulse Pte. Ltd.",
