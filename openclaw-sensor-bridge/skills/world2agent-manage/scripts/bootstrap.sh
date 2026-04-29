@@ -20,12 +20,30 @@ add_step() {
   steps=$(jq -c --arg k "$1" --arg v "$2" '. + {($k):$v}' <<<"$steps")
 }
 
-# Step 1: binary on PATH.
+# Step 1: binary on PATH. If missing, auto-install the bridge package globally
+# via npm. The agent will surface npm's stderr (sudo prompt, EACCES, etc.) so
+# the user can re-run with elevated rights if needed.
+binary_status="present"
 if ! command -v world2agent-openclaw-supervisor >/dev/null 2>&1 \
-   || ! command -v world2agent-sensor-runner >/dev/null 2>&1; then
-  out_err "world2agent-openclaw-supervisor / world2agent-sensor-runner not on PATH; install the bridge runtime first (see package README)"
+   || ! command -v world2agent-openclaw-runner >/dev/null 2>&1; then
+  command -v npm >/dev/null 2>&1 \
+    || out_err "world2agent-openclaw-supervisor not on PATH and 'npm' is unavailable; install Node.js + npm first, or install the bridge runtime manually"
+  printf '[bootstrap] installing @world2agent/openclaw-sensor-bridge globally...\n' >&2
+  install_log=$(mktemp)
+  if ! npm install -g @world2agent/openclaw-sensor-bridge >"$install_log" 2>&1; then
+    cat "$install_log" >&2
+    rm -f "$install_log"
+    out_err "auto-install of @world2agent/openclaw-sensor-bridge failed; you may need 'sudo npm install -g @world2agent/openclaw-sensor-bridge'"
+  fi
+  rm -f "$install_log"
+  hash -r 2>/dev/null || true
+  if ! command -v world2agent-openclaw-supervisor >/dev/null 2>&1 \
+     || ! command -v world2agent-openclaw-runner >/dev/null 2>&1; then
+    out_err "bridge binaries still not on PATH after install; check that npm's global bin dir is on PATH (npm bin -g)"
+  fi
+  binary_status="installed"
 fi
-add_step binary "present"
+add_step binary "$binary_status"
 
 # Step 2: bridge state.
 state_path=$(bridge_state_path)
@@ -34,14 +52,31 @@ state_existed=true
 ensure_bridge_state || out_err "could not write $state_path"
 add_step state "$([ "$state_existed" = true ] && echo "present" || echo "created")"
 
-# Step 3: verify OpenClaw hooks are ready. Read-only — we don't silently
-# modify the gateway config; the user opted into hooks themselves.
-hooks_err=$(openclaw_hooks_ready 2>&1) && hooks_err=""
-if [ -n "$hooks_err" ]; then
-  out_err "OpenClaw hooks not ready: $hooks_err. Edit $(openclaw_config_path) to set hooks.enabled=true, hooks.token=\"<secret>\", hooks.allowRequestSessionKey=true, and at least one entry in hooks.allowedSessionKeyPrefixes (e.g. \"w2a:\"). Then restart the gateway."
-fi
+# Step 3: ensure OpenClaw hooks are ready. We mutate the gateway config when
+# needed (idempotent; existing tokens are preserved). If we did mutate, the
+# user must restart `openclaw gateway` for the new block to take effect —
+# we surface that via gateway_restart_needed in the output.
+hooks_action=$(ensure_openclaw_hooks 2>/tmp/.w2a-hooks-err) || {
+  err=$(cat /tmp/.w2a-hooks-err 2>/dev/null); rm -f /tmp/.w2a-hooks-err
+  out_err "could not configure OpenClaw hooks: ${err:-unknown error}. Edit $(openclaw_config_path) manually to set hooks.enabled=true, hooks.token=\"<secret>\", hooks.allowRequestSessionKey=true, hooks.allowedSessionKeyPrefixes=[\"w2a:\"]; then restart the gateway."
+}
+rm -f /tmp/.w2a-hooks-err
+gateway_restart_needed=false
+hooks_backup=""
+case "$hooks_action" in
+  noop)
+    add_step openclaw_hooks "ready"
+    ;;
+  wrote:*)
+    hooks_backup=${hooks_action#wrote:}
+    add_step openclaw_hooks "wrote-managed-fields"
+    gateway_restart_needed=true
+    ;;
+  *)
+    out_err "unexpected ensure_openclaw_hooks output: $hooks_action"
+    ;;
+esac
 prefix=$(default_session_key_prefix)
-add_step openclaw_hooks "ready"
 
 # Step 4: supervisor process.
 if supervisor_alive; then
@@ -66,4 +101,8 @@ out_ok "$(jq -nc \
   --arg oh "$(openclaw_home)" \
   --argjson port "$control_port" \
   --arg prefix "$prefix" \
-  '{steps:$s,openclaw_home:$oh,control_port:$port,session_key_prefix:$prefix}')"
+  --argjson restart "$gateway_restart_needed" \
+  --arg backup "$hooks_backup" \
+  '{steps:$s,openclaw_home:$oh,control_port:$port,session_key_prefix:$prefix,
+    gateway_restart_needed:$restart,
+    openclaw_config_backup: (if $backup == "" then null else $backup end)}')"

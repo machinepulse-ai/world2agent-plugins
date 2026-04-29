@@ -224,6 +224,77 @@ openclaw_hooks_ready() {
   return 0
 }
 
+# Idempotently fix the OpenClaw hooks block so the bridge can deliver signals.
+# Mutates ~/.openclaw/openclaw.json only when something actually needs to
+# change; an existing user-set token is preserved verbatim.
+#
+# Effects when needed:
+#   - create the file (with `{}`) if missing
+#   - set hooks.enabled = true
+#   - generate hooks.token if empty (32 hex chars from /dev/urandom)
+#   - set hooks.allowRequestSessionKey = true
+#   - ensure "w2a:" is present in hooks.allowedSessionKeyPrefixes
+#
+# A timestamped backup is written next to the file before any mutation.
+# Stdout: "noop" when nothing changed, or "wrote:<backup-path>" on mutation.
+# Stderr: human-readable error on failure. Return: 0 ok, 1 fail.
+ensure_openclaw_hooks() {
+  local cfg
+  cfg=$(openclaw_config_path)
+  mkdir -p "$(dirname "$cfg")" || { echo "could not mkdir $(dirname "$cfg")" >&2; return 1; }
+  if [ ! -f "$cfg" ]; then
+    printf '{}\n' >"$cfg" || { echo "could not create $cfg" >&2; return 1; }
+  fi
+
+  if ! jq -e . "$cfg" >/dev/null 2>&1; then
+    echo "$cfg is not valid JSON; refusing to mutate" >&2
+    return 1
+  fi
+
+  local enabled token allow has_w2a
+  enabled=$(jq -r '.hooks.enabled // false' "$cfg")
+  token=$(jq -r '.hooks.token // ""' "$cfg")
+  allow=$(jq -r '.hooks.allowRequestSessionKey // false' "$cfg")
+  has_w2a=$(jq -r '((.hooks.allowedSessionKeyPrefixes // []) | any(. == "w2a:"))' "$cfg")
+
+  local changed=false
+  [ "$enabled"  != "true" ] && changed=true
+  [ "$allow"    != "true" ] && changed=true
+  [ "$has_w2a"  != "true" ] && changed=true
+  [ -z "$token" ]           && changed=true
+
+  if [ "$changed" = false ]; then
+    printf 'noop\n'
+    return 0
+  fi
+
+  local new_token=$token
+  [ -z "$new_token" ] && new_token=$(random_hex 32)
+
+  local backup="$cfg.w2a-backup-$(date +%Y%m%d%H%M%S)"
+  cp -p "$cfg" "$backup" 2>/dev/null || { echo "could not back up $cfg to $backup" >&2; return 1; }
+
+  local tmp
+  tmp=$(mktemp)
+  if ! jq --arg token "$new_token" '
+        .hooks = ((.hooks // {})
+          + { enabled: true,
+              allowRequestSessionKey: true,
+              token: ((.hooks.token // "") | if . == "" then $token else . end),
+              allowedSessionKeyPrefixes: (
+                ((.hooks.allowedSessionKeyPrefixes // []) | map(select(type == "string")))
+                | if any(. == "w2a:") then . else . + ["w2a:"] end
+              )
+            })
+      ' "$cfg" >"$tmp"; then
+    rm -f "$tmp"
+    echo "jq rewrite of $cfg failed" >&2
+    return 1
+  fi
+  mv "$tmp" "$cfg"
+  printf 'wrote:%s\n' "$backup"
+}
+
 # Picks the first viable sessionKey prefix from
 # hooks.allowedSessionKeyPrefixes, preferring `w2a:` then `hook:`.
 # Falls back to `w2a:` if the array is missing.
