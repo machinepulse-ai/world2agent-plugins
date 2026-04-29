@@ -34,8 +34,8 @@
       },
       "defaultAgentId": {
         "type": "string",
-        "default": "world2agent",
-        "description": "Dedicated OpenClaw agent id whose skills allowlist should receive W2A skills."
+        "default": "main",
+        "description": "OpenClaw agent id W2A signals lane through. Defaults to 'main' so signals share the user's existing main agent (different sessionKey per sensor — no cross-contamination of the user's chat session). Set to a dedicated agent id (e.g. 'world2agent') if you want full isolation; that agent must exist via `openclaw agents add <id>`."
       },
       "provider": {
         "type": "string",

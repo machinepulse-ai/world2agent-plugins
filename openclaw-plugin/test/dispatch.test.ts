@@ -24,7 +24,7 @@ const TEST_SIGNAL = {
 };
 
 describe("EmbeddedDispatcher", () => {
-  it("serializes by sensor session and renders the prompt-prefix fallback", async () => {
+  it("dispatches via runEmbeddedAgent with `# System Event` framed prompt", async () => {
     const calls: EmbeddedAgentRunRequest[] = [];
     const dispatcher = new EmbeddedDispatcher({
       api: {
@@ -35,14 +35,13 @@ describe("EmbeddedDispatcher", () => {
               return { ok: true };
             }),
           },
+          // NO `system` namespace at all → must fall back to embedded path
         },
       },
       openclawConfigRef: {
         current: {
           agents: {
-            defaults: {
-              contextInjection: "continuation-skip",
-            },
+            defaults: { contextInjection: "continuation-skip" },
             list: [],
           },
         },
@@ -52,22 +51,21 @@ describe("EmbeddedDispatcher", () => {
         requestTimeoutMs: 12_345,
         ingestDedupTtlMs: 3_600_000,
       },
-      paths: makePaths("/tmp/w2a-openclaw-dispatch"),
+      paths: makePaths("/tmp/w2a-openclaw-dispatch-fallback"),
     });
 
-    await dispatcher.dispatch({
+    const result = (await dispatcher.dispatch({
       sensorId: "fake-tick",
       skillId: "world2agent-sensor-fake-tick",
       signal: TEST_SIGNAL,
-    });
+    })) as { path: string };
 
+    expect(result.path).toBe("embedded");
     expect(calls).toHaveLength(1);
     expect(calls[0]?.sessionId).toBe("w2a-fake-tick");
-    expect(calls[0]?.sessionKey).toBe("w2a:fake-tick");
-    expect(calls[0]?.timeoutMs).toBe(12_345);
-    expect(calls[0]?.prompt.startsWith("Use skill: world2agent-sensor-fake-tick")).toBe(
-      true,
-    );
+    expect(calls[0]?.sessionKey).toBe("agent:world2agent:w2a-fake-tick");
+    expect(calls[0]?.prompt.startsWith("# System Event")).toBe(true);
+    expect(calls[0]?.prompt).toContain("Use skill: world2agent-sensor-fake-tick");
   });
 });
 

@@ -59,7 +59,53 @@ export interface OpenClawPluginLogger {
 }
 
 export interface OpenClawRuntimeAgentSessionApi {
-  resolveSessionFilePath?(config: OpenClawConfig, sessionId: string): string;
+  resolveSessionFilePath?(
+    sessionId: string,
+    entry?: { sessionFile?: string },
+    opts?: { agentId?: string; sessionsDir?: string },
+  ): string;
+  resolveStorePath?(
+    store?: string,
+    opts?: { agentId?: string },
+  ): string;
+  loadSessionStore?(agentId: string): Promise<Record<string, unknown>>;
+  saveSessionStore?(
+    agentId: string,
+    store: Record<string, unknown>,
+  ): Promise<void>;
+}
+
+export interface OpenClawRuntimeSystemApi {
+  /**
+   * Enqueue a system event for a given session. OpenClaw drains queued
+   * system events at the start of the next agent turn and prepends them to
+   * the prompt as `System:` lines — this is the canonical way for plugins
+   * to inject context as a system notification rather than as user input.
+   */
+  enqueueSystemEvent?(
+    text: string,
+    options: {
+      sessionKey: string;
+      contextKey?: string | null;
+      trusted?: boolean;
+    },
+  ): boolean;
+  /**
+   * Wake the agent for a specific session/lane. OpenClaw's heartbeat
+   * handler will spin up a turn for that sessionKey, automatically draining
+   * the queued system events into the turn's prompt as `System:` lines.
+   * This is the same mechanism the bundled cron plugin uses to inject
+   * scheduled events into the agent.
+   *
+   * Fire-and-forget — does NOT await turn completion.
+   */
+  requestHeartbeatNow?(opts?: {
+    reason?: string;
+    coalesceMs?: number;
+    agentId?: string;
+    sessionKey?: string;
+    heartbeat?: { target?: string };
+  }): void;
 }
 
 export interface OpenClawRuntimeAgentApi {
@@ -70,9 +116,40 @@ export interface OpenClawRuntimeAgentApi {
   session?: OpenClawRuntimeAgentSessionApi;
 }
 
+export interface OpenClawConfigWriteOptions {
+  afterWrite?: { mode?: "auto" | "skip" | "refresh" } & Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface OpenClawReplaceConfigFileParams {
+  nextConfig: OpenClawConfig;
+  baseHash?: string;
+  afterWrite?: OpenClawConfigWriteOptions["afterWrite"];
+  writeOptions?: OpenClawConfigWriteOptions;
+}
+
+export interface OpenClawMutateConfigFileParams {
+  mutate: (
+    draft: OpenClawConfig,
+    ctx: { snapshot: unknown; previousHash: string },
+  ) => unknown | Promise<unknown>;
+  base?: "runtime" | "source";
+  baseHash?: string;
+  afterWrite?: OpenClawConfigWriteOptions["afterWrite"];
+  writeOptions?: OpenClawConfigWriteOptions;
+}
+
 export interface OpenClawRuntimeConfigApi {
+  /** @deprecated Use current() instead. */
   loadConfig?(): Promise<OpenClawConfig>;
-  writeConfigFile?(config: OpenClawConfig): Promise<void>;
+  current?(): OpenClawConfig;
+  /** @deprecated Use mutateConfigFile / replaceConfigFile instead. */
+  writeConfigFile?(
+    config: OpenClawConfig,
+    options?: OpenClawConfigWriteOptions,
+  ): Promise<void>;
+  mutateConfigFile?(params: OpenClawMutateConfigFileParams): Promise<unknown>;
+  replaceConfigFile?(params: OpenClawReplaceConfigFileParams): Promise<unknown>;
 }
 
 export interface CliCommandBuilder {
@@ -126,6 +203,7 @@ export interface OpenClawPluginApi {
   runtime?: {
     agent?: OpenClawRuntimeAgentApi;
     config?: OpenClawRuntimeConfigApi;
+    system?: OpenClawRuntimeSystemApi;
   };
 }
 

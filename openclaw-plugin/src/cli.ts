@@ -43,8 +43,19 @@ export function registerWorld2AgentCli(services: World2AgentCliServices): void {
         .command("add <pkg>")
         .description("Install and configure a sensor")
         .option("--sensor-id <id>", "Override the default sensor id")
-        .option("--config-file <path>", "Path to the sensor config JSON file")
+        .option(
+          "--config-file <path>",
+          "Path to a sensor config JSON file",
+        )
+        .option(
+          "--config-json <json>",
+          "Inline JSON config string (alternative to --config-file)",
+        )
         .option("--isolated", "Run this sensor out-of-process")
+        .option(
+          "--skip-generate-skill",
+          "Do not auto-generate a fallback SKILL.md. Use this when the calling agent has already written a personalized handler skill via the SETUP.md Q&A flow.",
+        )
         .action(async (pkg: string, options: Record<string, unknown>) => {
           printJson(await runAddCommand(services, pkg, options));
         });
@@ -100,10 +111,21 @@ async function runAddCommand(
   const installed = await ensurePackageInstalled(pkg);
   const sensorId = optionString(options, "sensorId") ?? defaultSensorId(pkg);
   const configFile = optionString(options, "configFile");
+  const configJson = optionString(options, "configJson");
   const isolated = optionBoolean(options, "isolated");
+  const skipGenerateSkill = optionBoolean(options, "skipGenerateSkill");
   const skillId = packageToSkillId(pkg);
-  const sensorConfig = await loadConfigFile(configFile, installed);
-  await writeGeneratedSkill(services.paths, pkg, installed);
+  const sensorConfig = await loadConfigFile(configFile, configJson, installed);
+
+  // The agent-driven path (world2agent-manage skill running SETUP.md Q&A)
+  // writes a personalized SKILL.md before invoking this command and passes
+  // --skip-generate-skill. The fallback path (direct CLI use) lets the
+  // helper write a generic SKILL.md, but only when the file doesn't exist.
+  let skillGenerated: { written: boolean } = { written: false };
+  if (!skipGenerateSkill) {
+    const result = await writeGeneratedSkill(services.paths, pkg, installed);
+    skillGenerated = { written: result.written };
+  }
 
   const manifest = await readManifest(services.paths);
   const entry: SensorEntry = {
@@ -129,6 +151,8 @@ async function runAddCommand(
     sensor_id: sensorId,
     skill_id: skillId,
     isolated,
+    skill_generated: skillGenerated.written,
+    skill_path: join(services.paths.openclawSkillsDir, skillId, "SKILL.md"),
     allowlist,
     reload,
   };
@@ -196,8 +220,27 @@ async function maybePersistAllowlist(
   skillId: string,
 ): Promise<unknown> {
   const result = upsertDedicatedAgentSkillAllowlist(config, agentId, skillId);
-  if (result.changed && typeof api.runtime?.config?.writeConfigFile === "function") {
-    await api.runtime.config.writeConfigFile(result.nextConfig);
+  if (result.changed) {
+    const cfg = api.runtime?.config;
+    // OpenClaw's runtime APIs take a params object, not the config directly:
+    //   replaceConfigFile({ nextConfig, ... })
+    //   mutateConfigFile({ mutate: (draft) => { ...mutate in place... } })
+    // Passing the config bare causes OpenClaw to destructure it as params and
+    // see `params.nextConfig === undefined`, which fails schema validation.
+    if (typeof cfg?.replaceConfigFile === "function") {
+      await cfg.replaceConfigFile({ nextConfig: result.nextConfig });
+    } else if (typeof cfg?.mutateConfigFile === "function") {
+      await cfg.mutateConfigFile({
+        mutate: (draft) => {
+          const next = result.nextConfig as Record<string, unknown>;
+          const target = draft as Record<string, unknown>;
+          for (const key of Object.keys(target)) delete target[key];
+          for (const [key, value] of Object.entries(next)) target[key] = value;
+        },
+      });
+    } else if (typeof cfg?.writeConfigFile === "function") {
+      await cfg.writeConfigFile(result.nextConfig);
+    }
   }
   return {
     changed: result.changed,

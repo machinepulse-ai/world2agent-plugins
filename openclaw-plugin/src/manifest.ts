@@ -68,7 +68,7 @@ export function normalizeSensorEntry(entry: SensorEntry): SensorEntry {
   return {
     sensor_id: entry.sensor_id,
     pkg: entry.pkg,
-    skill_id: packageToSkillId(entry.pkg),
+    skill_id: entry.skill_id?.trim() ? entry.skill_id : packageToSkillId(entry.pkg),
     enabled: entry.enabled !== false,
     isolated: entry.isolated === true,
     config: entry.config ?? {},

@@ -87,10 +87,25 @@ export class SensorRuntime {
     const store = new FileSensorStore({
       path: join(this.paths.stateDir, `${entry.sensor_id}.json`),
     });
+    // Sensor logger writes to stderr (via this.log → OpenClaw's logger), NEVER stdout.
+    // stdout in the gateway process is shared with the user's terminal during
+    // interactive commands like `openclaw agents add`, and noisy sensor logs
+    // would corrupt those interactive prompts.
+    const sensorLog = (line: string) => this.log(`[w2a/${entry.sensor_id}] ${line}`);
+    const sensorLogger = {
+      info: (msg: string, ...args: unknown[]) =>
+        sensorLog(args.length > 0 ? `${msg} ${args.map(String).join(" ")}` : msg),
+      warn: (msg: string, ...args: unknown[]) =>
+        sensorLog(args.length > 0 ? `WARN ${msg} ${args.map(String).join(" ")}` : `WARN ${msg}`),
+      error: (msg: string, ...args: unknown[]) =>
+        sensorLog(args.length > 0 ? `ERROR ${msg} ${args.map(String).join(" ")}` : `ERROR ${msg}`),
+      debug: (msg: string, ...args: unknown[]) =>
+        sensorLog(args.length > 0 ? `DEBUG ${msg} ${args.map(String).join(" ")}` : `DEBUG ${msg}`),
+    };
     const cleanup = await startSensor(spec, {
       config: entry.config,
       store,
-      logger: console,
+      logger: sensorLogger,
       logEmits: true,
       onSignal: async (signal) => {
         try {
@@ -99,9 +114,12 @@ export class SensorRuntime {
             skillId: entry.skill_id,
             signal,
           });
+          this.log(
+            `[w2a/${entry.sensor_id}] dispatched ${signal.signal_id} [${signal.event?.type ?? "unknown"}]`,
+          );
         } catch (error) {
           this.log(
-            `[w2a/${entry.sensor_id}] dispatch failed: ${errorMessage(error)}`,
+            `[w2a/${entry.sensor_id}] dispatch failed for ${signal.signal_id}: ${errorMessage(error)}`,
           );
         }
       },

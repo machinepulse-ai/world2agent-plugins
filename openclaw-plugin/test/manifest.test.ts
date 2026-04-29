@@ -11,17 +11,19 @@ import {
 import type { World2AgentPaths } from "../src/types.js";
 
 describe("manifest helpers", () => {
-  it("writes and reads a normalized manifest", async () => {
+  it("writes and reads a normalized manifest, preserving custom skill_id", async () => {
     const root = await mkdtemp(join(tmpdir(), "w2a-openclaw-manifest-"));
     const paths = makePaths(root);
 
+    // Custom skill_id must be preserved end-to-end (matches hermes-bridge
+    // behavior; previously this PR overrode it with packageToSkillId).
     await writeManifest(paths, {
       version: 1,
       sensors: [
         {
           sensor_id: "hackernews",
           pkg: "@world2agent/sensor-hackernews",
-          skill_id: "ignored-on-write",
+          skill_id: "my-custom-handler",
           enabled: true,
           isolated: true,
           config: { interval_ms: 30_000 },
@@ -36,13 +38,35 @@ describe("manifest helpers", () => {
         {
           sensor_id: "hackernews",
           pkg: "@world2agent/sensor-hackernews",
-          skill_id: "world2agent-sensor-hackernews",
+          skill_id: "my-custom-handler",
           enabled: true,
           isolated: true,
           config: { interval_ms: 30_000 },
         },
       ],
     });
+  });
+
+  it("falls back to packageToSkillId when skill_id is empty", async () => {
+    const root = await mkdtemp(join(tmpdir(), "w2a-openclaw-manifest-"));
+    const paths = makePaths(root);
+
+    await writeManifest(paths, {
+      version: 1,
+      sensors: [
+        {
+          sensor_id: "hackernews",
+          pkg: "@world2agent/sensor-hackernews",
+          skill_id: "",
+          enabled: true,
+          isolated: false,
+          config: {},
+        },
+      ],
+    });
+
+    const manifest = await readManifest(paths);
+    expect(manifest.sensors[0]?.skill_id).toBe("world2agent-sensor-hackernews");
   });
 
   it("upserts and removes entries by sensor id", () => {

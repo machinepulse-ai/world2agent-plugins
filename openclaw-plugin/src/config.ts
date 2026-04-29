@@ -11,6 +11,12 @@ export const REQUIRED_CONTEXT_INJECTION = "continuation-skip";
 export async function loadEffectiveOpenClawConfig(
   api: OpenClawPluginApi,
 ): Promise<OpenClawConfig> {
+  // Prefer config.current() (newer API); fall back to deprecated loadConfig()
+  // for compat with older OpenClaw runtimes; final fallback is api.config
+  // (the static snapshot handed to register()).
+  if (typeof api.runtime?.config?.current === "function") {
+    return api.runtime.config.current();
+  }
   if (typeof api.runtime?.config?.loadConfig === "function") {
     return api.runtime.config.loadConfig();
   }
@@ -42,7 +48,12 @@ export function normalizePluginConfig(
     sessionDir: asOptionalString(raw.sessionDir),
     workspaceDir: asOptionalString(raw.workspaceDir),
     ingestUrl: asOptionalString(raw.ingestUrl),
-    defaultAgentId: asOptionalString(raw.defaultAgentId) ?? "world2agent",
+    // Default to "main" so W2A signals lane through the user's existing main
+    // agent (different sessionKey, no cross-contamination of the user's
+    // chat session). Operators who want full isolation can set
+    // `defaultAgentId: "world2agent"` (or any other agent id) in plugin config
+    // — they then need `openclaw agents add <id>` to create that agent.
+    defaultAgentId: asOptionalString(raw.defaultAgentId) ?? "main",
     provider: asOptionalString((raw as Record<string, unknown>).provider),
     model: asOptionalString((raw as Record<string, unknown>).model),
     requestTimeoutMs: asPositiveInteger(raw.requestTimeoutMs) ?? 120_000,
@@ -88,9 +99,22 @@ export function upsertDedicatedAgentSkillAllowlist(
     };
   }
 
-  const currentSkills = Array.isArray(currentAgent.skills)
-    ? [...currentAgent.skills]
-    : [];
+  // Only extend an EXISTING allowlist. If the agent has no `skills` field,
+  // they have no allowlist (= every skill is accessible) and we must NOT
+  // create one out of nowhere — that would silently restrict the agent to
+  // just this one skill, breaking the conversational install flow for any
+  // future sensor (since `world2agent-manage` would no longer be reachable).
+  // The dispatcher's prompt-prefix fallback (`Use skill: <id>`) covers the
+  // no-allowlist case correctly.
+  if (!Array.isArray(currentAgent.skills)) {
+    return {
+      changed: false,
+      nextConfig: config,
+      warning: null,
+    };
+  }
+
+  const currentSkills = [...currentAgent.skills];
   if (currentSkills.includes(skillId)) {
     return {
       changed: false,

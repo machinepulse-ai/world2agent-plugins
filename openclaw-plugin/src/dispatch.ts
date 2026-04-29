@@ -1,9 +1,13 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { hasDedicatedAgentSkillsAllowlist } from "./config.js";
 import { renderSignalPrompt } from "./prompt.js";
-import type { OpenClawConfig } from "./openclaw/plugin-sdk/types.js";
+import type {
+  OpenClawConfig,
+  OpenClawPluginApi,
+} from "./openclaw/plugin-sdk/types.js";
 import type {
   Dispatcher,
   DispatcherDispatchInput,
@@ -13,7 +17,8 @@ import type {
 } from "./types.js";
 
 const RUN_EMBEDDED_AGENT_ERROR =
-  "M0 spike unverified: api.runtime.agent.runEmbeddedAgent not found — verify against a live OpenClaw install";
+  "OpenClaw runtime is missing api.runtime.agent.runEmbeddedAgent. Verify the " +
+  "plugin is running inside a live OpenClaw gateway.";
 
 export function assertEmbeddedAgentRuntime(options: EmbeddedDispatcherOptions): void {
   if (typeof options.api.runtime?.agent?.runEmbeddedAgent !== "function") {
@@ -54,7 +59,7 @@ export class EmbeddedDispatcher implements Dispatcher {
     input: DispatcherDispatchInput,
     sessionId: string,
   ): Promise<unknown> {
-    const prompt = renderSignalPrompt(input.signal, {
+    const signalText = renderSignalPrompt(input.signal, {
       skillId: input.skillId,
       useSkillPrefix: !hasDedicatedAgentSkillsAllowlist(
         this.options.openclawConfigRef.current,
@@ -63,33 +68,84 @@ export class EmbeddedDispatcher implements Dispatcher {
     });
 
     const config = this.options.openclawConfigRef.current;
-    const runtimeAgent = this.options.api.runtime!.agent!;
+    const api = this.options.api;
+    const runtimeAgent = api.runtime?.agent;
     const agentId = this.options.pluginConfig.defaultAgentId ?? "main";
-    const sessionKey = `w2a:${input.sensorId}`;
+    // sessionKey is the colon-namespaced lane OpenClaw uses for system-event
+    // routing and heartbeat targeting. `agent:<agentId>:<sessionId>` matches
+    // OpenClaw's standard shape (e.g. main agent's chat is `agent:main:main`).
+    const sessionKey = `agent:${agentId}:${sessionId}`;
     const openclawHome = this.options.paths.openclawHome;
-    const workspaceDir =
-      this.options.pluginConfig.workspaceDir ??
-      tryCall(() => runtimeAgent.resolveAgentWorkspaceDir?.(config, agentId)) ??
-      join(openclawHome, "workspace");
     const agentDir =
-      tryCall(() => runtimeAgent.resolveAgentDir?.(config, agentId)) ??
+      tryCall(() => runtimeAgent?.resolveAgentDir?.(config, agentId)) ??
       join(openclawHome, "agents", agentId);
-    const sessionFile = join(agentDir, "sessions", `${sessionId}.jsonl`);
-    const timeoutMs =
-      this.options.pluginConfig.requestTimeoutMs ??
-      tryCall(() => runtimeAgent.resolveAgentTimeoutMs?.(config)) ??
-      120_000;
 
-    // OpenClaw's runEmbeddedAgent silently defaults to "openai/gpt-5.4" when
-    // provider/model are absent — it does NOT read agents.defaults.model.primary.
-    // Resolve the effective default ourselves so signal-driven runs follow the
-    // operator's configured model.
+    const sessionsApi = runtimeAgent?.session;
+    const sessionFile =
+      tryCall(() =>
+        sessionsApi?.resolveSessionFilePath?.(sessionId, undefined, { agentId }),
+      ) ?? join(agentDir, "sessions", `${sessionId}.jsonl`);
+
     const { provider, model } = resolveProviderAndModel(
       config,
       this.options.pluginConfig,
     );
 
-    return runtimeAgent.runEmbeddedAgent!({
+    // ─────────────────────────────────────────────────────────────────
+    //  Dispatch via runEmbeddedAgent + `# System Event` prompt prefix.
+    //
+    //  Originally we tried OpenClaw's enqueueSystemEvent + requestHeartbeatNow
+    //  to inject the signal as a true system message (matching the spirit of
+    //  claude-code-channel's `notifications/claude/channel`). In OpenClaw
+    //  2026.4.26 that path *does* spawn a turn and *does* drain the queued
+    //  event — but `drainFormattedSystemEvents` materializes the event as a
+    //  text block prefixed with `System:` lines and **injects it into the
+    //  user-role prompt**, not into a real system message. Net result: the
+    //  signal still occupies user-role position in the transcript, just
+    //  prefixed with the literal characters "System:".
+    //
+    //  Until OpenClaw exposes a plugin API that writes a true system-role
+    //  message, we use runEmbeddedAgent and frame the prompt inline. The
+    //  agent treats the `# System Event` block as an external notification
+    //  thanks to the framing, even though it lives in user-role position.
+    // ─────────────────────────────────────────────────────────────────
+    if (typeof runtimeAgent?.runEmbeddedAgent !== "function") {
+      throw new Error(
+        "OpenClaw runtime does not expose runEmbeddedAgent — this plugin cannot dispatch signals against this OpenClaw version.",
+      );
+    }
+
+    const workspaceDir =
+      this.options.pluginConfig.workspaceDir ??
+      tryCall(() => runtimeAgent.resolveAgentWorkspaceDir?.(config, agentId)) ??
+      join(openclawHome, "workspace");
+    const timeoutMs =
+      this.options.pluginConfig.requestTimeoutMs ??
+      tryCall(() => runtimeAgent.resolveAgentTimeoutMs?.(config)) ??
+      120_000;
+
+    await ensureSessionRegistered({
+      api,
+      agentId,
+      sessionId,
+      sessionKey,
+      sessionFile,
+      sensorId: input.sensorId,
+      provider,
+      model,
+    });
+
+    const promptForTurn =
+      "# System Event\n\n" +
+      "The following is an external event delivered by a World2Agent sensor. " +
+      "It is NOT a user request — do not address the user as if they typed " +
+      "this message. Load the referenced skill and apply its rules: the skill " +
+      "owns the policy for when to reply, how to format, and when to stay " +
+      "quiet. Defer to the skill, not to your own judgment about relevance.\n\n" +
+      "---\n\n" +
+      signalText;
+
+    const result = await runtimeAgent.runEmbeddedAgent!({
       sessionId,
       sessionKey,
       agentId,
@@ -98,11 +154,137 @@ export class EmbeddedDispatcher implements Dispatcher {
       workspaceDir,
       agentDir,
       config,
-      prompt,
+      prompt: promptForTurn,
       timeoutMs,
       ...(provider ? { provider } : {}),
       ...(model ? { model } : {}),
     } as Parameters<NonNullable<typeof runtimeAgent.runEmbeddedAgent>>[0]);
+
+    await mirrorIsolatedSessionFiles(agentDir, sessionId).catch(() => undefined);
+    await ensureSessionRegistered({
+      api,
+      agentId,
+      sessionId,
+      sessionKey,
+      sessionFile,
+      sensorId: input.sensorId,
+      provider,
+      model,
+    }).catch(() => undefined);
+
+    return { ok: true, path: "embedded", result };
+  }
+}
+
+async function ensureSessionRegistered(params: {
+  api: OpenClawPluginApi;
+  agentId: string;
+  sessionId: string;
+  sessionKey: string;
+  sessionFile: string;
+  sensorId: string;
+  provider?: string;
+  model?: string;
+}): Promise<void> {
+  const now = Date.now();
+
+  // Build the entry once, used by both paths below.
+  const entryFor = (existing?: Record<string, unknown>): Record<string, unknown> =>
+    existing
+      ? { ...existing, updatedAt: now, lastInteractionAt: now }
+      : {
+          sessionId: params.sessionId,
+          sessionFile: params.sessionFile,
+          sessionStartedAt: now,
+          startedAt: now,
+          updatedAt: now,
+          lastInteractionAt: now,
+          endedAt: null,
+          status: "idle",
+          origin: "world2agent",
+          chatType: "embedded",
+          lastChannel: "world2agent",
+          agentHarnessId: "claude-cli",
+          ...(params.model ? { model: params.model } : {}),
+          ...(params.provider ? { modelProvider: params.provider } : {}),
+          totalTokens: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          contextTokens: 0,
+          runtimeMs: 0,
+        };
+
+  // Try OpenClaw's session-store API first (preferred — it integrates with
+  // OpenClaw's in-memory caches). Best-effort; if it silently no-ops or
+  // throws we still get the file via the unconditional direct write below.
+  const sessionsApi = params.api.runtime?.agent?.session;
+  const load = sessionsApi?.loadSessionStore;
+  const save = sessionsApi?.saveSessionStore;
+  if (typeof load === "function" && typeof save === "function") {
+    try {
+      const store = (await load(params.agentId)) as Record<string, unknown>;
+      store[params.sessionKey] = entryFor(
+        store[params.sessionKey] as Record<string, unknown> | undefined,
+      );
+      await save(params.agentId, store);
+    } catch {
+      // ignore — direct write below is the source of truth
+    }
+  }
+
+  // ALWAYS write sessions.json directly. OpenClaw's `openclaw sessions
+  // --agent <id>` and the dashboard read this file; a plugin-side
+  // saveSessionStore call is opaque and can no-op silently in some
+  // OpenClaw versions, so we don't trust it as the only mechanism.
+  const sessionFileDir = dirname(params.sessionFile);
+  const storePath = join(sessionFileDir, "sessions.json");
+  let raw: Record<string, unknown> = {};
+  try {
+    const fs = await import("node:fs/promises");
+    const txt = await fs.readFile(storePath, "utf8");
+    raw = JSON.parse(txt) as Record<string, unknown>;
+  } catch {
+    raw = {};
+  }
+  raw[params.sessionKey] = entryFor(
+    raw[params.sessionKey] as Record<string, unknown> | undefined,
+  );
+  await mkdir(sessionFileDir, { recursive: true });
+  await writeFile(storePath, JSON.stringify(raw, null, 2) + "\n", "utf8");
+}
+
+async function mirrorIsolatedSessionFiles(
+  agentDir: string,
+  sessionId: string,
+): Promise<void> {
+  // runEmbeddedAgent writes to `<agentDir>/agent/sessions/<id>.{jsonl,trajectory.jsonl,trajectory-path.json}`.
+  // OpenClaw's user-facing session viewer reads from `<agentDir>/sessions/<id>.jsonl`.
+  // Mirror the three files so the dashboard can render the conversation.
+  const isolatedDir = join(agentDir, "agent", "sessions");
+  const standardDir = join(agentDir, "sessions");
+  await mkdir(standardDir, { recursive: true });
+  for (const suffix of [".jsonl", ".trajectory.jsonl", ".trajectory-path.json"] as const) {
+    const src = join(isolatedDir, `${sessionId}${suffix}`);
+    const dst = join(standardDir, `${sessionId}${suffix}`);
+    try {
+      await copyFile(src, dst);
+    } catch {
+      // best-effort; missing files are fine for sessions that haven't been
+      // written yet (e.g. early failure in runEmbeddedAgent).
+    }
+  }
+  // Rewrite the trajectory pointer so it references the canonical path.
+  try {
+    const ptrPath = join(standardDir, `${sessionId}.trajectory-path.json`);
+    const fs = await import("node:fs/promises");
+    const ptrText = await fs.readFile(ptrPath, "utf8");
+    const ptr = JSON.parse(ptrText) as Record<string, unknown>;
+    ptr.runtimeFile = join(standardDir, `${sessionId}.trajectory.jsonl`);
+    await fs.writeFile(ptrPath, JSON.stringify(ptr, null, 2), "utf8");
+  } catch {
+    // ignore — pointer is non-critical
   }
 }
 
