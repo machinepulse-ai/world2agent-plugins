@@ -151,18 +151,22 @@ reply to a real chat. Without it, signals only land in the OpenClaw
 dashboard's session lane and the user has to manually open the dashboard
 to see them — which is almost never what they want.
 
-**You MUST ask the user about delivery before installing**, in their
-conversation language. Three short questions, in order:
+**You MUST ask the user about delivery before installing**, translating
+into their conversation language (per "Conversation language" above).
+Three short questions, in order:
 
-1. *"信号到达后,要把回复推送到 IM (你能直接收到通知),还是只记录到
-   OpenClaw dashboard (要主动去看才能发现)?"*
+1. *"When a signal arrives, do you want the reply pushed to a chat
+   (so you'll actually be notified), or only logged to the OpenClaw
+   dashboard (you'd have to open it yourself to see anything)?"*
    - Push → continue to Q2.
    - Dashboard-only → skip Q2/Q3, go to Step 4.
-2. *"推送到哪个平台?"* — accept one of: `feishu`, `telegram`, `discord`,
-   `slack`, `imessage`, `wecom`, `dingtalk`, `signal`, `whatsapp`.
-3. *"推送到哪个目标? 飞书填你的 user open_id (`ou_xxx`) 或群 chat_id
-   (`oc_xxx`); 不知道的话用 `/lark-contact` 查自己的 open_id。其它平台
-   填对应的用户/群 ID。"*
+2. *"Which platform should the reply go to?"* — accept one of:
+   `feishu`, `telegram`, `discord`, `slack`, `imessage`, `wecom`,
+   `dingtalk`, `signal`, `whatsapp`.
+3. *"What's the target ID on `<platform>`? For feishu that's your
+   user `open_id` (`ou_xxx`) or a group `chat_id` (`oc_xxx`); if you
+   don't know yours, run `/lark-contact` to look up your own `open_id`.
+   For other platforms, the corresponding user or group identifier."*
 
 Then in Step 5 pass `--notify-channel <ch> --notify-to <handle>` for push
 mode, or pass neither for dashboard-only.
