@@ -245,6 +245,20 @@ if [ -z "$reload_result" ] || ! jq -e . <<<"$reload_result" >/dev/null 2>&1; the
   reload_result='null'
 fi
 
+# Surface the resolved delivery target so the SKILL/agent can give the user
+# accurate post-install feedback. Without this, a sensor that silently fell
+# back to "dashboard-only" looks identical to a fully-wired push sensor in
+# the script output — agent reports "installed!" and the user never realises
+# signals aren't being pushed anywhere.
+if [ -n "$notify_channel" ]; then
+  delivery_json=$(jq -nc \
+    --arg ch "$notify_channel" \
+    --arg to "$notify_to" \
+    '{mode:"push", channel:$ch, to:$to}')
+else
+  delivery_json='{"mode":"dashboard-only","channel":null,"to":null}'
+fi
+
 out_ok "$(jq -nc \
   --arg pkg "$pkg" \
   --arg sensor_id "$sensor_id" \
@@ -253,4 +267,5 @@ out_ok "$(jq -nc \
   --arg agent_id "$agent_id" \
   --arg skill_path "$skill_dir/SKILL.md" \
   --argjson reload "$reload_result" \
-  '{package:$pkg,sensor_id:$sensor_id,skill_id:$skill_id,session_key:$session_key,agent_id:$agent_id,skill_path:$skill_path,supervisor_reload:$reload}')"
+  --argjson delivery "$delivery_json" \
+  '{package:$pkg,sensor_id:$sensor_id,skill_id:$skill_id,session_key:$session_key,agent_id:$agent_id,skill_path:$skill_path,supervisor_reload:$reload,delivery:$delivery}')"

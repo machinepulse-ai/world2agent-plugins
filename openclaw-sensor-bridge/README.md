@@ -37,7 +37,7 @@ Edit `~/.openclaw/openclaw.json` to include:
   "enabled": true,
   "token": "<a long random secret you keep private>",
   "allowRequestSessionKey": true,
-  "allowedSessionKeyPrefixes": ["w2a:"]
+  "allowedSessionKeyPrefixes": ["hook:", "w2a:"]
 }
 ```
 
