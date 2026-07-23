@@ -58,7 +58,7 @@ add_step state "$([ "$state_existed" = true ] && echo "present" || echo "created
 # we surface that via gateway_restart_needed in the output.
 hooks_action=$(ensure_openclaw_hooks 2>/tmp/.w2a-hooks-err) || {
   err=$(cat /tmp/.w2a-hooks-err 2>/dev/null); rm -f /tmp/.w2a-hooks-err
-  out_err "could not configure OpenClaw hooks: ${err:-unknown error}. Edit $(openclaw_config_path) manually to set hooks.enabled=true, hooks.token=\"<secret>\", hooks.allowRequestSessionKey=true, hooks.allowedSessionKeyPrefixes=[\"w2a:\"]; then restart the gateway."
+  out_err "could not configure OpenClaw hooks: ${err:-unknown error}. Edit $(openclaw_config_path) manually to set hooks.enabled=true, hooks.token=\"<secret>\", hooks.allowRequestSessionKey=true, hooks.allowedSessionKeyPrefixes=[\"hook:\",\"w2a:\"]; then restart the gateway."
 }
 rm -f /tmp/.w2a-hooks-err
 gateway_restart_needed=false
