@@ -147,24 +147,37 @@ JSON
 ### Step 3: choose delivery target
 
 OpenClaw's `/hooks/agent` accepts a `deliver` flag that routes the agent's
-reply to a real channel. Three options:
+reply to a real chat. Without it, signals only land in the OpenClaw
+dashboard's session lane and the user has to manually open the dashboard
+to see them — which is almost never what they want.
 
-| Mode | Effect | Pick when |
-|---|---|---|
-| auto-push to paired channel (**default**) | Agent runs, reply auto-delivered via OpenClaw's outbound layer. `install-sensor.sh` auto-detects the first `<PLATFORM>_HOME_CHANNEL=<handle>` entry in `~/.openclaw/.env` (priority: feishu, imessage, telegram, slack, discord, signal, whatsapp, wecom, dingtalk) and uses that as the target. | User has already paired a chat platform with OpenClaw — the env var is the user's signal that "this is my preferred inbox." |
-| dashboard-only | Agent runs, reply persists to the W2A session lane only. User has to open the dashboard / `openclaw sessions` to see it. | No paired channel, or user explicitly wants the handler skill to gate notifications via `imsg`/`feishu`/etc. tool calls of its own. |
-| explicit `--notify-channel <ch> --notify-to <handle>` | Same as auto-push but the user picks the channel/handle. | User has multiple paired channels and wants this sensor on a non-default one. |
+**You MUST ask the user about delivery before installing**, translating
+into their conversation language (per "Conversation language" above).
+Three short questions, in order:
 
-**Default behavior:** if the user doesn't bring delivery up,
-`install-sensor.sh` auto-fills `--notify-channel` / `--notify-to` from the
-home-channel env vars and the agent reply is pushed to that chat. Only
-when no `<PLATFORM>_HOME_CHANNEL` is set does it fall back to
-dashboard-only. So **don't ask the user about delivery unless they raise
-it** — a paired channel is a strong signal they've already chosen their
-preferred inbox.
+1. *"When a signal arrives, do you want the reply pushed to a chat
+   (so you'll actually be notified), or only logged to the OpenClaw
+   dashboard (you'd have to open it yourself to see anything)?"*
+   - Push → continue to Q2.
+   - Dashboard-only → skip Q2/Q3, go to Step 4.
+2. *"Which platform should the reply go to?"* — accept one of:
+   `feishu`, `telegram`, `discord`, `slack`, `imessage`, `wecom`,
+   `dingtalk`, `signal`, `whatsapp`.
+3. *"What's the target ID on `<platform>`? For feishu that's your
+   user `open_id` (`ou_xxx`) or a group `chat_id` (`oc_xxx`); if you
+   don't know yours, run `/lark-contact` to look up your own `open_id`.
+   For other platforms, the corresponding user or group identifier."*
 
-Pass `--notify-channel`/`--notify-to` explicitly to override, or omit
-both on a host with no paired channels for dashboard-only.
+Then in Step 5 pass `--notify-channel <ch> --notify-to <handle>` for push
+mode, or pass neither for dashboard-only.
+
+**Do not** read or write `~/.openclaw/.env` from this SKILL. The script
+keeps a `<PLATFORM>_HOME_CHANNEL` auto-fill as a power-user shortcut for
+people who'd rather configure once than answer per-install — but treat
+that as an invisible internal optimization. **Always ask the three
+questions above**, even if you suspect `.env` might be set up. If the
+script's auto-detect kicks in despite the user's answer, the explicit
+CLI flags you pass take precedence.
 
 ### Step 4: compose the handler SKILL.md
 
@@ -257,7 +270,12 @@ Successful output:
   "session_key": "w2a:hackernews",
   "agent_id": "main",
   "skill_path": "/.../SKILL.md",
-  "supervisor_reload": { "ok": true, "applied": {"started":[...]} } | null
+  "supervisor_reload": { "ok": true, "applied": {"started":[...]} } | null,
+  "delivery": {
+    "mode": "push" | "dashboard-only",
+    "channel": "feishu" | null,
+    "to": "ou_xxx" | null
+  }
 }
 ```
 
@@ -265,16 +283,36 @@ Successful output:
 reachable from this process — that's fine, the file watcher picks up the
 new `~/.world2agent/config.json` entry within ~500 ms anyway.
 
+`delivery.mode` reflects what the script actually wired up — read it
+verbatim and report it back in Step 6 (don't assume the user's Step 3
+answer succeeded; the `.env` auto-fill could have kicked in unexpectedly,
+or — more importantly — the user could have answered "push" but you
+forgot to pass the flags).
+
 If the install script refuses with a frontmatter mismatch, fix the rendered
 handler's `name` and retry.
 
 ### Step 6: report to the user
 
-One sentence: `Installed <package> (sensor_id <sensor>); next matching
-signal will trigger an agent run on session lane agent:<agent>:<session_key>.`
+Branch on `result.delivery.mode`:
 
-If they configured a notify target, add: `replies will be delivered to
-<channel>:<to>`.
+- **`mode == "push"`**:
+  *"Installed `<package>` (sensor_id `<sensor>`). Replies will be
+  delivered to `<delivery.channel>:<delivery.to>`. The next matching
+  signal will trigger an agent run on session lane
+  `agent:<agent>:<session_key>`."*
+
+- **`mode == "dashboard-only"`** (⚠️ user MUST be told explicitly):
+  *"Installed `<package>` (sensor_id `<sensor>`), but **no IM target
+  configured** — replies will only land in the OpenClaw dashboard
+  (session lane `agent:<agent>:<session_key>`); you won't get a
+  notification anywhere. To enable push later: re-run
+  `/world2agent:sensor-add` and answer "push" to the delivery question,
+  or run `world2agent-manage` directly with
+  `--notify-channel <ch> --notify-to <handle>`."*
+
+The dashboard-only case is the one that silently bites users — never
+report it as a plain "installed!" without spelling out the consequence.
 
 ---
 

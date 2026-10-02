@@ -1,6 +1,6 @@
 {
   "name": "@world2agent/openclaw-sensor-bridge",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "description": "World2Agent bridge for OpenClaw — runs sensors as supervised subprocesses and delivers their signals into OpenClaw via the gateway's /hooks/agent webhook",
   "license": "Apache-2.0",
   "author": "MachinePulse Pte. Ltd.",

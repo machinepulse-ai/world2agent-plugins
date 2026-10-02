@@ -233,7 +233,13 @@ openclaw_hooks_ready() {
 #   - set hooks.enabled = true
 #   - generate hooks.token if empty (32 hex chars from /dev/urandom)
 #   - set hooks.allowRequestSessionKey = true
-#   - ensure "w2a:" is present in hooks.allowedSessionKeyPrefixes
+#   - ensure both "hook:" and "w2a:" are present in
+#     hooks.allowedSessionKeyPrefixes
+#
+# `hook:` is OpenClaw's own default sessionKey namespace — without it in the
+# allowlist, the gateway refuses to start (`hooks.allowedSessionKeyPrefixes
+# must include 'hook:' when hooks.defaultSessionKey is unset`). `w2a:` is the
+# bridge's per-sensor lane.
 #
 # A timestamped backup is written next to the file before any mutation.
 # Stdout: "noop" when nothing changed, or "wrote:<backup-path>" on mutation.
@@ -251,15 +257,17 @@ ensure_openclaw_hooks() {
     return 1
   fi
 
-  local enabled token allow has_w2a
+  local enabled token allow has_hook has_w2a
   enabled=$(jq -r '.hooks.enabled // false' "$cfg")
   token=$(jq -r '.hooks.token // ""' "$cfg")
   allow=$(jq -r '.hooks.allowRequestSessionKey // false' "$cfg")
+  has_hook=$(jq -r '((.hooks.allowedSessionKeyPrefixes // []) | any(. == "hook:"))' "$cfg")
   has_w2a=$(jq -r '((.hooks.allowedSessionKeyPrefixes // []) | any(. == "w2a:"))' "$cfg")
 
   local changed=false
   [ "$enabled"  != "true" ] && changed=true
   [ "$allow"    != "true" ] && changed=true
+  [ "$has_hook" != "true" ] && changed=true
   [ "$has_w2a"  != "true" ] && changed=true
   [ -z "$token" ]           && changed=true
 
@@ -283,7 +291,8 @@ ensure_openclaw_hooks() {
               token: ((.hooks.token // "") | if . == "" then $token else . end),
               allowedSessionKeyPrefixes: (
                 ((.hooks.allowedSessionKeyPrefixes // []) | map(select(type == "string")))
-                | if any(. == "w2a:") then . else . + ["w2a:"] end
+                | if any(. == "hook:") then . else . + ["hook:"] end
+                | if any(. == "w2a:")  then . else . + ["w2a:"]  end
               )
             })
       ' "$cfg" >"$tmp"; then
